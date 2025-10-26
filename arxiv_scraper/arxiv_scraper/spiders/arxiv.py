@@ -20,9 +20,9 @@ class ArxivSpider(scrapy.Spider):
     # Max results per API request - arXiv API allows up to 2000 per request
     max_results_per_request = 2000
 
-    # Date range for fetching papers
-    start_date = "2024-01-01"
-    end_date = "2024-12-31"
+    # Default date range for fetching papers (can be overridden with -a start_date=... -a end_date=...)
+    start_date = "2025-01-01"
+    end_date = "2025-03-15"
 
     # All Computer Science subcategories to query separately (avoids wildcard API limits)
     cs_categories = [
@@ -77,20 +77,27 @@ class ArxivSpider(scrapy.Spider):
 
         # Open file using relative path
         results_file = os.path.join(results_dir, "arxiv_results.csv")
-        self.file = open(results_file, "w", newline="", encoding="utf-8")
+
+        # Check if file exists and has content to determine if we need header
+        file_exists = os.path.exists(results_file) and os.path.getsize(results_file) > 0
+
+        # Open file in append mode
+        self.file = open(results_file, "a", newline="", encoding="utf-8")
         self.writer = csv.writer(self.file)
-        self.max_articles = 100000  # Maximum number of articles you want to fetch
-        # Write the header row
-        self.writer.writerow(
-            [
-                "Link/DOI",
-                "Publication Date",
-                "Title",
-                "Authors",
-                "Abstract",
-                "Categories",
-            ]
-        )
+        self.max_articles = 200000  # Maximum number of articles you want to fetch
+
+        # Write the header row only if file is new/empty
+        if not file_exists:
+            self.writer.writerow(
+                [
+                    "Link/DOI",
+                    "Publication Date",
+                    "Title",
+                    "Authors",
+                    "Abstract",
+                    "Categories",
+                ]
+            )
 
     def close_spider(self, spider):
         self.file.close()

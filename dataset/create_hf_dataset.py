@@ -187,9 +187,69 @@ class DatasetCreator:
 
         return combined_df
 
+    def deduplicate_by_column(self, df, column_name, keep="first"):
+        """
+        Remove duplicates based on a specific column
+
+        Args:
+            df: pandas DataFrame
+            column_name: Name of the column to check for duplicates
+            keep: Which duplicate to keep ('first', 'last', or False to drop all)
+
+        Returns:
+            pandas.DataFrame: Deduplicated dataset
+        """
+        original_count = len(df)
+
+        if column_name not in df.columns:
+            print(
+                f"\nWarning: Column '{column_name}' not found. Skipping deduplication."
+            )
+            return df
+
+        print(f"\nDeduplicating by '{column_name}'...")
+        df_dedup = df.drop_duplicates(subset=[column_name], keep=keep)
+        duplicates_removed = original_count - len(df_dedup)
+
+        print(f"  Removed {duplicates_removed} duplicates")
+        print(f"  Remaining: {len(df_dedup)} examples")
+
+        return df_dedup
+
+    def sort_by_date(self, df, date_column):
+        """
+        Sort dataset by date column
+
+        Args:
+            df: pandas DataFrame
+            date_column: Name of the date column
+
+        Returns:
+            pandas.DataFrame: Sorted dataset
+        """
+        if date_column not in df.columns:
+            print(
+                f"\nWarning: Date column '{date_column}' not found. Skipping sorting."
+            )
+            return df
+
+        print(f"\nSorting by '{date_column}'...")
+
+        # Convert to datetime if not already
+        df[date_column] = pd.to_datetime(df[date_column], errors="coerce")
+
+        # Sort by date
+        df_sorted = df.sort_values(by=date_column).reset_index(drop=True)
+
+        print(
+            f"  Date range: {df_sorted[date_column].min()} to {df_sorted[date_column].max()}"
+        )
+
+        return df_sorted
+
     def create_train_test_split(self, df, test_size=0.2, label_column="label"):
         """
-        Split dataset into train and test sets
+        Split dataset into train and test sets (random stratified split)
 
         Args:
             df: pandas DataFrame
@@ -215,8 +275,79 @@ class DatasetCreator:
 
         return train_df, test_df
 
+    def create_date_based_split(self, df, date_column, test_year=2025):
+        """
+        Split dataset by publication year (temporal split)
+
+        Args:
+            df: pandas DataFrame
+            date_column: Name of the date column
+            test_year: Year(s) to use for test set (int or list of ints)
+
+        Returns:
+            tuple: (train_df, test_df)
+        """
+        if date_column not in df.columns:
+            raise ValueError(f"Date column '{date_column}' not found in dataset")
+
+        print("\nCreating date-based split...")
+
+        # Ensure date column is datetime
+        df[date_column] = pd.to_datetime(df[date_column], errors="coerce")
+
+        # Extract year
+        df["_year"] = df[date_column].dt.year
+
+        # Handle single year or list of years
+        if isinstance(test_year, int):
+            test_years = [test_year]
+        else:
+            test_years = test_year
+
+        # Split by year
+        test_df = df[df["_year"].isin(test_years)].copy()
+        train_df = df[~df["_year"].isin(test_years)].copy()
+
+        # Remove temporary year column
+        train_df = train_df.drop("_year", axis=1)
+        test_df = test_df.drop("_year", axis=1)
+
+        print(
+            f"  Train set: {len(train_df)} examples (years < {min(test_years)} or > {max(test_years)})"
+        )
+        print(f"  Test set: {len(test_df)} examples (year(s): {test_years})")
+
+        if len(test_df) == 0:
+            print(f"\n  Warning: No papers found for test year(s) {test_years}")
+
+        # Show year distribution
+        train_years = (
+            pd.to_datetime(train_df[date_column]).dt.year.value_counts().sort_index()
+        )
+        test_years_dist = (
+            pd.to_datetime(test_df[date_column]).dt.year.value_counts().sort_index()
+        )
+
+        print("\n  Train year distribution:")
+        for year, count in train_years.items():
+            print(f"    {int(year)}: {count}")
+
+        print("\n  Test year distribution:")
+        for year, count in test_years_dist.items():
+            print(f"    {int(year)}: {count}")
+
+        return train_df, test_df
+
     def upload_to_huggingface(
-        self, df, repo_name, private=True, split_data=False, test_size=0.2
+        self,
+        df,
+        repo_name,
+        private=True,
+        split_data=False,
+        test_size=0.2,
+        date_based_split=False,
+        date_column=None,
+        test_year=2025,
     ):
         """
         Upload dataset to Hugging Face Hub
@@ -227,13 +358,27 @@ class DatasetCreator:
             private: Whether to make the dataset private (default: True)
             split_data: Whether to split into train/test sets (default: False)
             test_size: Fraction of data for test set if split_data=True (default: 0.2)
+            date_based_split: Use date-based split instead of random split
+            date_column: Name of date column for date-based split
+            test_year: Year(s) for test set in date-based split
         """
         print("\n" + "=" * 60)
         print("Creating Hugging Face dataset...")
         print("=" * 60)
 
         if split_data:
-            train_df, test_df = self.create_train_test_split(df, test_size=test_size)
+            if date_based_split:
+                if date_column is None:
+                    raise ValueError(
+                        "date_column must be specified for date-based split"
+                    )
+                train_df, test_df = self.create_date_based_split(
+                    df, date_column, test_year
+                )
+            else:
+                train_df, test_df = self.create_train_test_split(
+                    df, test_size=test_size
+                )
 
             dataset_dict = DatasetDict(
                 {
@@ -302,26 +447,35 @@ Examples:
     --negative random1.csv:Random random2.csv:ArXiv \\
     --repo username/my-dataset
 
-  # Mix explicit and default sources
+  # With deduplication and date sorting
   python create_hf_dataset.py \\
-    --positive iclr_2024.csv:ICLR-2024 accepted.csv \\
-    --negative random.csv \\
-    --default-positive-source "Conference" \\
-    --default-negative-source "Random" \\
+    --positive iclr_2024.csv:ICLR-2024 \\
+    --negative random.csv:Random \\
+    --deduplicate "Link/DOI" \\
+    --sort-by-date \\
     --repo username/my-dataset
 
-  # Split into train/test and save locally
+  # Date-based split (2025 papers as test set)
   python create_hf_dataset.py \\
     --positive positive.csv:ICLR-2024 \\
     --negative negative.csv:Random \\
-    --repo username/my-dataset \\
+    --deduplicate "Link/DOI" \\
+    --sort-by-date \\
+    --split \\
+    --date-based-split \\
+    --test-year 2025 \\
+    --repo username/my-dataset
+
+  # Random split with preprocessing
+  python create_hf_dataset.py \\
+    --positive positive.csv:ICLR-2024 \\
+    --negative negative.csv:Random \\
+    --deduplicate "Link/DOI" \\
+    --sort-by-date \\
     --split \\
     --test-size 0.2 \\
-    --save-local output.csv
-
-  # Use environment variable for token
-  export HF_TOKEN=your_token_here
-  python create_hf_dataset.py --positive pos.csv:Source1 --negative neg.csv:Source2 --repo username/dataset
+    --save-local output.csv \\
+    --repo username/my-dataset
         """,
     )
 
@@ -379,6 +533,25 @@ Examples:
         help="Hugging Face API token (or set HF_TOKEN environment variable)",
     )
 
+    # Data preprocessing
+    parser.add_argument(
+        "--deduplicate",
+        type=str,
+        default=None,
+        help='Column name to deduplicate by (e.g., "Link/DOI")',
+    )
+    parser.add_argument(
+        "--sort-by-date",
+        action="store_true",
+        help="Sort dataset by publication date",
+    )
+    parser.add_argument(
+        "--date-column",
+        type=str,
+        default="Publication Date",
+        help="Name of the date column (default: 'Publication Date')",
+    )
+
     # Privacy and splitting
     parser.add_argument(
         "--public",
@@ -393,6 +566,18 @@ Examples:
         type=float,
         default=0.2,
         help="Fraction of data for test set if --split is used (default: 0.2)",
+    )
+    parser.add_argument(
+        "--date-based-split",
+        action="store_true",
+        help="Use date-based split (test set = specified year(s))",
+    )
+    parser.add_argument(
+        "--test-year",
+        type=int,
+        nargs="+",
+        default=[2025],
+        help="Year(s) for test set in date-based split (default: 2025)",
     )
 
     # Local save
@@ -416,6 +601,9 @@ Examples:
     if args.test_size <= 0 or args.test_size >= 1:
         raise ValueError("test-size must be between 0 and 1")
 
+    if args.date_based_split and not args.split:
+        raise ValueError("--date-based-split requires --split to be set")
+
     # Initialize creator
     creator = DatasetCreator(hf_token=args.hf_token)
 
@@ -429,9 +617,20 @@ Examples:
         default_negative_source=args.default_negative_source,
     )
 
+    # Deduplicate if requested
+    if args.deduplicate:
+        df = creator.deduplicate_by_column(df, args.deduplicate)
+
+    # Sort by date if requested
+    if args.sort_by_date:
+        df = creator.sort_by_date(df, args.date_column)
+
     # Save locally if requested
     if args.save_local:
         creator.save_locally(df, args.save_local, format=args.format)
+
+    # Prepare test year argument
+    test_year = args.test_year[0] if len(args.test_year) == 1 else args.test_year
 
     # Upload to Hugging Face
     creator.upload_to_huggingface(
@@ -440,6 +639,9 @@ Examples:
         private=not args.public,
         split_data=args.split,
         test_size=args.test_size,
+        date_based_split=args.date_based_split,
+        date_column=args.date_column,
+        test_year=test_year,
     )
 
 

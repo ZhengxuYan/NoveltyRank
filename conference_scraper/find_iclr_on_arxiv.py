@@ -1,11 +1,24 @@
 """
-Find ICLR 2024 accepted papers on arXiv
+Find ICLR accepted papers on arXiv
 
 This script:
 1. Reads iclr26v1_papers.csv
-2. Filters for 2024 accepted papers
+2. Filters for accepted papers by year(s)
 3. Searches each paper on arXiv by title
 4. Outputs results in the same format as arxiv_scraper output
+
+Usage examples:
+    # Single year (default: 2024)
+    python find_iclr_on_arxiv.py --year 2024
+
+    # Multiple years
+    python find_iclr_on_arxiv.py --year 2023 2024
+
+    # All years
+    python find_iclr_on_arxiv.py --all-years
+
+    # All papers (not just accepted)
+    python find_iclr_on_arxiv.py --year 2024 --all-papers
 """
 
 import pandas as pd
@@ -21,19 +34,21 @@ import os
 class ICLRArxivMatcher:
     """Match ICLR papers with arXiv versions"""
 
-    def __init__(self, iclr_csv_path, output_csv_path=None):
+    def __init__(self, iclr_csv_path, output_csv_path=None, year=None):
         """
         Initialize the matcher
 
         Args:
             iclr_csv_path: Path to ICLR papers CSV
             output_csv_path: Path for output CSV (auto-generated if None)
+            year: Year for output filename (only used if output_csv_path is None)
         """
         self.iclr_csv_path = iclr_csv_path
 
         if output_csv_path is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.output_csv_path = f"results/iclr_2024_on_arxiv_{timestamp}.csv"
+            year_str = str(year) if year else "all"
+            self.output_csv_path = f"results/iclr_{year_str}_on_arxiv_{timestamp}.csv"
         else:
             self.output_csv_path = output_csv_path
 
@@ -46,14 +61,28 @@ class ICLRArxivMatcher:
         self.papers_found = 0
         self.papers_not_found = 0
 
-    def load_iclr_papers(self, year=2024, accept_only=True):
-        """Load and filter ICLR papers"""
+    def load_iclr_papers(self, year=None, accept_only=True):
+        """
+        Load and filter ICLR papers
+
+        Args:
+            year: Year to filter (int or list of ints). If None, loads all years.
+            accept_only: If True, only load accepted papers
+        """
         print(f"Loading ICLR papers from {self.iclr_csv_path}...")
         df = pd.read_csv(self.iclr_csv_path)
+        print(f"Total papers in dataset: {len(df)}")
 
         # Filter by year
-        df = df[df["year"] == year]
-        print(f"Found {len(df)} papers from {year}")
+        if year is not None:
+            if isinstance(year, list):
+                df = df[df["year"].isin(year)]
+                print(f"Found {len(df)} papers from years {year}")
+            else:
+                df = df[df["year"] == year]
+                print(f"Found {len(df)} papers from {year}")
+        else:
+            print("Loading papers from all years")
 
         # Filter by decision (accepted papers only)
         if accept_only:
@@ -213,12 +242,12 @@ class ICLRArxivMatcher:
             print(f"Error searching for '{title}': {e}")
             return None
 
-    def match_papers(self, year=2024, accept_only=True):
+    def match_papers(self, year=None, accept_only=True):
         """
         Match ICLR papers with arXiv versions
 
         Args:
-            year: ICLR year to process
+            year: ICLR year to process (int, list of ints, or None for all years)
             accept_only: Only process accepted papers
         """
         # Load ICLR papers
@@ -312,7 +341,18 @@ def main():
         default="results/iclr26v1_papers.csv",
         help="Path to ICLR papers CSV",
     )
-    parser.add_argument("--year", type=int, default=2024, help="ICLR year to process")
+    parser.add_argument(
+        "--year",
+        type=int,
+        nargs="*",
+        default=[2024],
+        help="ICLR year(s) to process (space-separated). Omit to process all years.",
+    )
+    parser.add_argument(
+        "--all-years",
+        action="store_true",
+        help="Process all years (overrides --year)",
+    )
     parser.add_argument(
         "--all-papers",
         action="store_true",
@@ -327,12 +367,30 @@ def main():
 
     args = parser.parse_args()
 
+    # Determine year filter
+    if args.all_years:
+        year_filter = None
+        year_for_filename = None
+    elif len(args.year) == 0:
+        year_filter = None
+        year_for_filename = None
+    elif len(args.year) == 1:
+        year_filter = args.year[0]
+        year_for_filename = args.year[0]
+    else:
+        year_filter = args.year
+        year_for_filename = "-".join(map(str, args.year))
+
     # Initialize matcher
-    matcher = ICLRArxivMatcher(iclr_csv_path=args.iclr_csv, output_csv_path=args.output)
+    matcher = ICLRArxivMatcher(
+        iclr_csv_path=args.iclr_csv,
+        output_csv_path=args.output,
+        year=year_for_filename,
+    )
 
     # Match papers
     accept_only = not args.all_papers
-    matcher.match_papers(year=args.year, accept_only=accept_only)
+    matcher.match_papers(year=year_filter, accept_only=accept_only)
 
 
 if __name__ == "__main__":
