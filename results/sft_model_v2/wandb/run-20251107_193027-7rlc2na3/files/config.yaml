@@ -1,0 +1,104 @@
+_wandb:
+    value:
+        cli_version: 0.22.2
+        e:
+            wuxht7tyejf6riqgj3dh5qzy8ciwza2a:
+                codePath: scripts/sft.py
+                codePathLocal: scripts/sft.py
+                cpu_count: 12
+                cpu_count_logical: 24
+                cudaVersion: "12.7"
+                disk:
+                    /:
+                        total: "1081101176832"
+                        used: "83812909056"
+                email: yumingf@stanford.edu
+                executable: /root/anaconda3/envs/hw2/bin/python
+                git:
+                    commit: 5a145b733a7c56ef6be6090181481d9c4b69ce09
+                    remote: git@github.com:ZhengxuYan/NoveltyRank.git
+                gpu: NVIDIA GeForce RTX 4060 Laptop GPU
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ada
+                      memoryTotal: "8585740288"
+                      name: NVIDIA GeForce RTX 4060 Laptop GPU
+                      uuid: GPU-bb585764-ac6f-571c-bc10-d8b571558dad
+                host: FYMLEGION
+                memory:
+                    total: "8204210176"
+                os: Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.35
+                program: /home/yumingfeng/repo/NoveltyRank/scripts/sft.py
+                python: CPython 3.11.13
+                root: /home/yumingfeng/repo/NoveltyRank/results/sft_model_v2
+                startedAt: "2025-11-08T03:30:27.338886Z"
+                writerId: wuxht7tyejf6riqgj3dh5qzy8ciwza2a
+        m: []
+        python_version: 3.11.13
+        t:
+            "1":
+                - 1
+                - 49
+                - 51
+            "2":
+                - 1
+                - 11
+                - 49
+                - 51
+            "3":
+                - 2
+                - 13
+                - 16
+                - 61
+            "4": 3.11.13
+            "5": 0.22.2
+            "12": 0.22.2
+            "13": linux-x86_64
+adam_beta1:
+    value: 0.9
+adam_beta2:
+    value: 0.95
+adam_eps:
+    value: 1e-08
+base_url:
+    value: null
+dataset_builder:
+    value:
+        common_config:
+            batch_size: 4096
+            max_length: 4096
+            model_name_for_tokenizer: Qwen/Qwen3-4B-Instruct-2507
+            renderer_name: qwen3_instruct
+            train_on_what: ALL_ASSISTANT_MESSAGES
+        file_path: /home/yumingfeng/repo/NoveltyRank/dataset/data_train_prompts.jsonl
+        shuffle_seed: 0
+        test_size: 0
+eval_every:
+    value: 10
+evaluator_builders:
+    value:
+        - __main__.build_config.<locals>.accuracy_eval_builder
+infrequent_eval_every:
+    value: 100
+infrequent_evaluator_builders:
+    value: []
+learning_rate:
+    value: 0.0002
+load_checkpoint_path:
+    value: null
+log_path:
+    value: /home/yumingfeng/repo/NoveltyRank/results/sft_model_v2
+lora_rank:
+    value: 32
+lr_schedule:
+    value: linear
+model_name:
+    value: Qwen/Qwen3-4B-Instruct-2507
+num_epochs:
+    value: 5
+save_every:
+    value: 20
+wandb_name:
+    value: 4b_eval_v2
+wandb_project:
+    value: NoveltyRank

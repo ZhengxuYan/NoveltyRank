@@ -5,6 +5,7 @@ env/
 ENV/
 .venv/
 *.egg-info/
+dataset/
 
 # CSV Files
 *.csv
