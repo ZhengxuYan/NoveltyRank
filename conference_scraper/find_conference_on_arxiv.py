@@ -9,16 +9,16 @@ This script:
 
 Usage examples:
     # ICLR papers from 2024
-    python find_iclr_on_arxiv.py --conference iclr --year 2024
+    python find_conference_on_arxiv.py --conference iclr --year 2024
 
     # NeurIPS papers from 2024 and 2025
-    python find_iclr_on_arxiv.py --conference neurips --year 2024 2025
+    python find_conference_on_arxiv.py --conference neurips --year 2024 2025
 
     # ICML papers from all years
-    python find_iclr_on_arxiv.py --conference icml --all-years
+    python find_conference_on_arxiv.py --conference icml --all-years
 
     # All papers (not just accepted)
-    python find_iclr_on_arxiv.py --conference neurips --year 2024 --all-papers
+    python find_conference_on_arxiv.py --conference neurips --year 2024 --all-papers
 """
 
 import pandas as pd
