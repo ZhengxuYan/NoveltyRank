@@ -76,14 +76,15 @@ class DatasetCreator:
 
     def parse_file_source_pairs(self, file_specs, default_source):
         """
-        Parse file specifications that can be either 'path' or 'path:source'
+        Parse file specifications that can be either 'path', 'path:source', or 'path:@column_name'
 
         Args:
             file_specs: List of file specifications
             default_source: Default source name if not specified
 
         Returns:
-            List of tuples: [(file_path, source_name), ...]
+            List of tuples: [(file_path, source_name_or_column), ...]
+            If source starts with '@', it's a column name to extract from
         """
         parsed = []
         for spec in file_specs:
@@ -136,8 +137,22 @@ class DatasetCreator:
             for file_path, source in file_source_pairs:
                 df = self.load_file(file_path)
                 df[label_column] = 1
-                df[source_column] = source
-                print(f"  → Source: {source}")
+                
+                # Check if source is a column reference (starts with @)
+                if source.startswith("@"):
+                    column_name = source[1:]  # Remove @ prefix
+                    if column_name not in df.columns:
+                        raise ValueError(f"Column '{column_name}' not found in {file_path}")
+                    df[source_column] = df[column_name]
+                    print(f"  → Source: from column '{column_name}'")
+                    # Show unique values in the source column
+                    unique_sources = df[source_column].value_counts()
+                    for src, count in unique_sources.items():
+                        print(f"     - {src}: {count}")
+                else:
+                    df[source_column] = source
+                    print(f"  → Source: {source}")
+                
                 all_data.append(df)
 
             print(f"Total positive examples: {sum(len(df) for df in all_data)}")
@@ -156,8 +171,22 @@ class DatasetCreator:
             for file_path, source in file_source_pairs:
                 df = self.load_file(file_path)
                 df[label_column] = 0
-                df[source_column] = source
-                print(f"  → Source: {source}")
+                
+                # Check if source is a column reference (starts with @)
+                if source.startswith("@"):
+                    column_name = source[1:]  # Remove @ prefix
+                    if column_name not in df.columns:
+                        raise ValueError(f"Column '{column_name}' not found in {file_path}")
+                    df[source_column] = df[column_name]
+                    print(f"  → Source: from column '{column_name}'")
+                    # Show unique values in the source column
+                    unique_sources = df[source_column].value_counts()
+                    for src, count in unique_sources.items():
+                        print(f"     - {src}: {count}")
+                else:
+                    df[source_column] = source
+                    print(f"  → Source: {source}")
+                
                 all_data.append(df)
 
             neg_count = sum(len(df) for df in all_data[neg_start_idx:])
@@ -447,6 +476,12 @@ Examples:
     --negative random1.csv:Random random2.csv:ArXiv \\
     --repo username/my-dataset
 
+  # Use a column from the dataframe as source (prefix with @)
+  python create_hf_dataset.py \\
+    --positive conference_papers.csv:@"Matched Conferences" \\
+    --negative arxiv_random.csv:ArXiv \\
+    --repo username/my-dataset
+
   # With deduplication and date sorting
   python create_hf_dataset.py \\
     --positive iclr_2024.csv:ICLR-2024 \\
@@ -484,13 +519,13 @@ Examples:
         "--positive",
         nargs="+",
         required=True,
-        help='Positive examples (label=1). Format: "path" or "path:source". Example: "data.csv:ICLR-2024"',
+        help='Positive examples (label=1). Format: "path", "path:source", or "path:@column_name". Example: "data.csv:ICLR-2024" or "data.csv:@Matched_Conferences"',
     )
     parser.add_argument(
         "--negative",
         nargs="+",
         required=True,
-        help='Negative examples (label=0). Format: "path" or "path:source". Example: "data.csv:Random"',
+        help='Negative examples (label=0). Format: "path", "path:source", or "path:@column_name". Example: "data.csv:Random" or "data.csv:@Source"',
     )
 
     # Output configuration

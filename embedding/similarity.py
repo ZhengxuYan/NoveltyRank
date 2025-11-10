@@ -1,131 +1,326 @@
 """
-Compute cosine similarity between paper embeddings and store top similar papers and corresponding similarity scores.
+Compute similarity between paper embeddings and create train/val/test splits using FAISS.
 
-The output final train and test datasets include additional columns:
-- 'classification_embedding': The feature embeddings used for novelty classification.
-- 'proximity_embedding': The proximity embeddings used for similarity calculations.
-- 'top_10_similar': Dictionary of top 10 similar papers with their Link/DOI and similarity scores.
-- 'max_similarity': Maximum similarity score among the top similar papers.
-- 'avg_similarity': Average similarity score among the top similar papers.
+New Logic:
+1. Load dataset from HuggingFace (with embeddings already generated)
+2. Build a FAISS index over proximity embeddings
+3. For each paper published in 2024-2025, query nearest neighbors and filter to papers
+   from the past 6 months
+4. Store top 10 similar papers (with embeddings and scores)
+5. Add similarity columns to dataset
+6. Split: Train (2024) / Validation (2025 H1) / Test (2025 H2)
+7. Push to new HuggingFace dataset
 
+Output columns:
+- 'classification_embedding': Feature embeddings for classification
+- 'proximity_embedding': Proximity embeddings for similarity
+- 'top_10_similar': List of dicts containing embeddings and similarity scores
+- 'max_similarity': Maximum similarity score
+- 'avg_similarity': Average similarity score
 """
 
-import pickle
-import pandas as pd
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
-from datetime import datetime
+import pandas as pd
+from datasets import load_dataset, Dataset, DatasetDict
+from datetime import timedelta
 from tqdm import tqdm
+import argparse
+import faiss
 
-# Load the embeddings
-with open('output/embeddings_train.pkl', 'rb') as f:
-    embeddings_train = pickle.load(f)
 
-with open('output/embeddings_test.pkl', 'rb') as f:
-    embeddings_test = pickle.load(f)
+def compute_similarities_for_papers(df, year_filter=None, search_k=200):
+    """
+    Compute similarities for papers published in specified years using FAISS.
 
-# Combine train and test embeddings
-df = pd.concat([embeddings_train, embeddings_test], ignore_index=True)
+    Args:
+        df: DataFrame with papers and embeddings
+        year_filter: List of years to process (for example [2024, 2025])
+        search_k: Number of nearest neighbors to query from FAISS
+                  before filtering by time window
 
-# Convert 'Publication Date' to datetime if it's not already
-if 'Publication Date' in df.columns:
-    df['Publication Date'] = pd.to_datetime(df['Publication Date'])
+    Returns:
+        DataFrame with similarity columns added
+    """
+    print("\n" + "=" * 80)
+    print("Computing Similarities with FAISS")
+    print("=" * 80)
 
-# Initialize columns for similarity results
-df['top_10_similar'] = None
-df['max_similarity'] = None
-df['avg_similarity'] = None
+    # Convert Publication Date to datetime
+    df["Publication Date"] = pd.to_datetime(df["Publication Date"])
 
-# Define papers that need similarity calculation 
-# Papers with source == ICLR-2024, ICLR-2025, or Publication Date >= 2024-01-01 & label=0
-target_mask = (
-    (df['source'] == 'ICLR-2024') |
-    (df['source'] == 'ICLR-2025') |
-    ((df['Publication Date'] >= pd.Timestamp('2024-01-01')) & (df['label'] == 0))
-)
+    # Precompute arrays
+    pub_dates = df["Publication Date"].to_numpy()
+    arxiv_ids = df["arXiv ID"].to_numpy()
 
-target_indices = df[target_mask].index
+    print("Building embedding matrix for FAISS index...")
+    emb_all = np.vstack([
+        np.asarray(e, dtype=np.float32)
+        for e in df["proximity_embedding"].values
+    ]).astype("float32")
 
-print(f"\nProcessing {len(target_indices)} papers for similarity calculation...")
-print("="*60)
+    dim = emb_all.shape[1]
+    print(f"Embedding matrix shape: {emb_all.shape} (dim = {dim})")
 
-# Process each target paper
-for idx in tqdm(target_indices, desc="Computing similarities"):
-    paper = df.loc[idx]
+    # Normalize for cosine similarity and build index
+    faiss.normalize_L2(emb_all)
+    index = faiss.IndexFlatIP(dim)
+    index.add(emb_all)
+    print("FAISS index built and populated")
 
-    # Determine comparison papers based on source and publication date
-    if paper['source'] == 'ICLR-2024':
-        # Compare with ICLR-2023 and papers published before 2023-09-28 (ICLR 2024 submission deadline) with label=0
-        comparison_mask = (
-            (df['source'] == 'ICLR-2023') |
-            ((df['Publication Date'] < pd.Timestamp('2023-09-28')) & (df['label'] == 0))
-        )
-    elif paper['source'] == 'ICLR-2025':
-        # Compare with ICLR-2024 and papers published before 2024-10-01 (ICLR 2025 submission deadline) with label=0
-        comparison_mask = (
-            (df['source'] == 'ICLR-2024') |
-            ((df['Publication Date'] < pd.Timestamp('2024-10-01')) & (df['label'] == 0))
-        )
+    # Initialize new columns
+    df["top_10_similar"] = None
+    df["max_similarity"] = None
+    df["avg_similarity"] = None
+
+    # Filter papers to process
+    if year_filter:
+        process_mask = pd.to_datetime(df["Publication Date"]).dt.year.isin(year_filter)
+        print(f"Processing papers from years: {year_filter}")
     else:
-        # For papers with label=0 and Publication Date >= 2024-01-01, compare with papers published before them
-        comparison_mask = df['Publication Date'] < paper['Publication Date']
+        process_mask = df["Publication Date"].notna()
+        print("Processing all papers with valid publication dates")
 
-    # Exclude the paper itself from comparison
-    comparison_mask = comparison_mask & (df.index != idx)
-    comparison_indices = df[comparison_mask].index
+    target_indices = np.where(process_mask.values)[0]
+    print(f"Total papers to process: {len(target_indices)}")
+    print()
 
-    if len(comparison_indices) == 0:
-        continue
-    
-    # Calculate cosine similarity
-    paper_embedding = df.loc[idx, 'Proximity_embedding'].reshape(1, -1)
-    comparison_embeddings = np.vstack(df.loc[comparison_indices, 'Proximity_embedding'].values)
+    # Process each paper
+    for idx in tqdm(target_indices, desc="Computing similarities"):
+        pub_date = pub_dates[idx]
 
-    similarities = cosine_similarity(paper_embedding, comparison_embeddings)[0]
-    
-    # Get top 10 most similar papers
-    top_10_idx = np.argsort(similarities)[-10:][::-1]
-    top_10_papers = comparison_indices[top_10_idx]
-    top_10_scores = similarities[top_10_idx]
-    
-    # Create dictionary of Link/DOI and similarity scores
-    top_10_dict = {
-        df.loc[top_10_papers[i], 'Link/DOI']: float(top_10_scores[i])
-        for i in range(len(top_10_papers))
-    }
-    
-    # Store results
-    df.at[idx, 'top_10_similar'] = top_10_dict
-    df.at[idx, 'max_similarity'] = float(np.max(top_10_scores)) if len(top_10_scores) > 0 else None
-    df.at[idx, 'avg_similarity'] = float(np.mean(top_10_scores)) if len(top_10_scores) > 0 else None
+        if pd.isna(pub_date):
+            df.at[idx, "top_10_similar"] = []
+            df.at[idx, "max_similarity"] = None
+            df.at[idx, "avg_similarity"] = None
+            continue
 
-# Split back to train and test
-# Test papers: source == 'ICLR-2025' or (Publication Date >= 2025-01-01 & label == 0)
-test_mask = (
-    (df['source'] == 'ICLR-2025') |
-    ((df['Publication Date'] >= pd.Timestamp('2025-01-01')) & (df['label'] == 0))
-)
+        # Define comparison window: 6 months before publication date
+        half_year_before = pub_date - np.timedelta64(180, "D")
 
-data_test = df[test_mask].reset_index(drop=True)
-data_train = df[~test_mask].reset_index(drop=True)
+        # Query FAISS for nearest neighbors
+        query_vec = emb_all[idx:idx+1].copy()
+        faiss.normalize_L2(query_vec)
+        D, I = index.search(query_vec, search_k)  # similarities and indices
 
-# Save the results
-print("\n" + "="*60)
-print("Saving results...")
-print("="*60)
+        candidates = []
+        for sim, j in zip(D[0], I[0]):
+            if j == idx:
+                continue
+            j_date = pub_dates[j]
+            # Only keep papers in the 6 months before this paper
+            if not (half_year_before <= j_date < pub_date):
+                continue
+            candidates.append((j, float(sim)))
+            if len(candidates) >= 10:
+                break
 
-with open('data_train.pkl', 'wb') as f:
-    pickle.dump(data_train, f)
-print(f"✓ Saved train set to data_train.pkl")
+        if len(candidates) == 0:
+            # No papers to compare with
+            df.at[idx, "top_10_similar"] = []
+            df.at[idx, "max_similarity"] = None
+            df.at[idx, "avg_similarity"] = None
+            continue
 
-with open('data_test.pkl', 'wb') as f:
-    pickle.dump(data_test, f)
-print(f"✓ Saved test set to data_test.pkl")
+        # Build list of dicts with embeddings and scores
+        top_k_similar = []
+        for j, sim in candidates:
+            top_k_similar.append(
+                {
+                    "arxiv_id": arxiv_ids[j],
+                    "similarity_score": sim,
+                    "embedding": df.at[j, "proximity_embedding"],
+                    "publication_date": str(pd.to_datetime(pub_dates[j]).date()),
+                }
+            )
 
-print("\n" + "="*60)
-print("Summary:")
-print("="*60)
-print(f"Total papers processed: {len(target_indices)}")
-print(f"Train set size: {len(data_train)}")
-print(f"Test set size: {len(data_test)}")
-print("="*60)
+        # Store results
+        df.at[idx, "top_10_similar"] = top_k_similar
+        df.at[idx, "max_similarity"] = float(top_k_similar[0]["similarity_score"])
+        df.at[idx, "avg_similarity"] = float(
+            np.mean([x["similarity_score"] for x in top_k_similar])
+        )
+
+    return df
+
+
+def create_splits(df):
+    """
+    Create train, validation, test splits based on publication year.
+
+    Train: 2024 papers
+    Validation: 2025 H1 papers (Jan Jun)
+    Test: 2025 H2 papers (Jul Dec)
+
+    Args:
+        df: DataFrame with papers
+
+    Returns:
+        tuple: (train_df, val_df, test_df)
+    """
+    print("\n" + "=" * 80)
+    print("Creating Train/Validation/Test Splits")
+    print("=" * 80)
+
+    # Ensure Publication Date is datetime
+    df["Publication Date"] = pd.to_datetime(df["Publication Date"])
+
+    # Train: 2024 papers
+    train_mask = df["Publication Date"].dt.year == 2024
+    train_df = df[train_mask].reset_index(drop=True)
+
+    # Validation and Test: 2025 papers (split 50/50)
+    papers_2025 = df[df["Publication Date"].dt.year == 2025].reset_index(drop=True)
+
+    split_idx = len(papers_2025) // 2
+    val_df = papers_2025.iloc[:split_idx].reset_index(drop=True)
+    test_df = papers_2025.iloc[split_idx:].reset_index(drop=True)
+
+    print(f"Train set (2024): {len(train_df)} papers")
+    print(f"Validation set (2025 H1): {len(val_df)} papers")
+    print(f"Test set (2025 H2): {len(test_df)} papers")
+    print(f"Total: {len(train_df) + len(val_df) + len(test_df)} papers")
+
+    return train_df, val_df, test_df
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compute similarities with FAISS and create train/val/test splits"
+    )
+    parser.add_argument(
+        "--source-dataset",
+        type=str,
+        default="JasonYan777/novelty-rank-dataset",
+        help="Source HuggingFace dataset (with embeddings)",
+    )
+    parser.add_argument(
+        "--output-dataset",
+        type=str,
+        default="JasonYan777/novelty-rank-with-similarities",
+        help="Output HuggingFace dataset name",
+    )
+    parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help="Do not push to HuggingFace (only process locally)",
+    )
+    parser.add_argument(
+        "--save-local",
+        action="store_true",
+        help="Save locally as pickle files",
+    )
+    parser.add_argument(
+        "--search-k",
+        type=int,
+        default=200,
+        help="Number of neighbors FAISS returns before time filtering",
+    )
+    args = parser.parse_args()
+
+    # Load dataset from HuggingFace
+    print("=" * 80)
+    print("Loading Dataset from HuggingFace")
+    print("=" * 80)
+    print(f"Dataset: {args.source_dataset}")
+
+    ds = load_dataset(args.source_dataset)
+    df = pd.DataFrame(ds["train"])
+
+    print(f"\nLoaded {len(df)} papers")
+    print(f"Columns: {list(df.columns)}")
+
+    # Check for required columns
+    required_cols = [
+        "proximity_embedding",
+        "classification_embedding",
+        "Publication Date",
+    ]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+
+    if missing_cols:
+        print(f"\nError: Missing required columns: {missing_cols}")
+        print("Please run embeddings.py first to generate embeddings!")
+        return
+
+    # Compute similarities for 2024 and 2025 papers
+    df_with_similarities = compute_similarities_for_papers(
+        df,
+        year_filter=[2024, 2025],
+        search_k=args.search_k,
+    )
+
+    # Filter to only keep 2024 and 2025 papers
+    df_filtered = (
+        df_with_similarities[
+            pd.to_datetime(df_with_similarities["Publication Date"]).dt.year.isin([2024, 2025])
+        ]
+        .copy()
+        .reset_index(drop=True)
+    )
+
+    print("\n" + "=" * 80)
+    print("Filtered Dataset")
+    print("=" * 80)
+    print(f"Kept papers from 2024 2025: {len(df_filtered)} papers")
+    print("Papers from other years excluded since they do not have full history")
+
+    # Create train/val/test splits
+    train_df, val_df, test_df = create_splits(df_filtered)
+
+    # Save locally if requested
+    if args.save_local:
+        import os
+
+        os.makedirs("output", exist_ok=True)
+
+        print("\n" + "=" * 80)
+        print("Saving Local Pickle Files")
+        print("=" * 80)
+
+        train_df.to_pickle("output/data_train.pkl")
+        print("Saved output/data_train.pkl")
+
+        val_df.to_pickle("output/data_val.pkl")
+        print("Saved output/data_val.pkl")
+
+        test_df.to_pickle("output/data_test.pkl")
+        print("Saved output/data_test.pkl")
+
+    # Push to HuggingFace
+    if not args.no_push:
+        print("\n" + "=" * 80)
+        print("Pushing to HuggingFace")
+        print("=" * 80)
+        print(f"Output dataset: {args.output_dataset}")
+
+        # Convert DataFrames to Datasets
+        train_dataset = Dataset.from_pandas(train_df, preserve_index=False)
+        val_dataset = Dataset.from_pandas(val_df, preserve_index=False)
+        test_dataset = Dataset.from_pandas(test_df, preserve_index=False)
+
+        dataset_dict = DatasetDict(
+            {"train": train_dataset, "validation": val_dataset, "test": test_dataset}
+        )
+
+        dataset_dict.push_to_hub(args.output_dataset, private=False)
+
+        print("Dataset pushed successfully!")
+        print(f"View at: https://huggingface.co/datasets/{args.output_dataset}")
+
+    # Final summary
+    print("\n" + "=" * 80)
+    print("ALL PROCESSING COMPLETE!")
+    print("=" * 80)
+    print(f"Train set: {len(train_df)} papers (2024)")
+    print(f"Validation set: {len(val_df)} papers (2025 H1)")
+    print(f"Test set: {len(test_df)} papers (2025 H2)")
+    print(f"Total: {len(train_df) + len(val_df) + len(test_df)} papers")
+    print("\nNew columns added:")
+    print("  top_10_similar: List of similar papers (embeddings and scores)")
+    print("  max_similarity: Maximum similarity score")
+    print("  avg_similarity: Average similarity score")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()

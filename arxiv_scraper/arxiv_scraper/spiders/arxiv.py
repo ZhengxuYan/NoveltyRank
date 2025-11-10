@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from datetime import datetime
 import scrapy
@@ -12,7 +13,11 @@ class ArxivSpider(scrapy.Spider):
     name = "arxiv"
 
     sleep_time = 3  # arXiv API recommends 3 seconds between requests
-    articles_fetched = 0  # Counter for articles written to CSV
+    articles_fetched = (
+        0  # Counter for articles written to CSV (both preprints and accepted)
+    )
+    preprints_fetched = 0  # Counter for preprints written to main CSV
+    accepted_fetched = 0  # Counter for accepted papers written to accepted CSV
     articles_processed = 0  # Counter for total articles processed (including skipped)
     start_index = 0  # For pagination
     current_category_index = 0  # Track which CS subcategory we're querying
@@ -21,51 +26,117 @@ class ArxivSpider(scrapy.Spider):
     max_results_per_request = 2000
 
     # Default date range for fetching papers (can be overridden with -a start_date=... -a end_date=...)
-    start_date = "2025-01-01"
-    end_date = "2025-03-15"
+    start_date = "2025-04-01"
+    end_date = "2025-06-30"
 
-    # All Computer Science subcategories to query separately (avoids wildcard API limits)
+    # Selected Computer Science subcategories focused on ML/AI domains
     cs_categories = [
-        "cs.AI",
-        "cs.AR",
-        "cs.CC",
-        "cs.CE",
-        "cs.CG",
-        "cs.CL",
-        "cs.CR",
-        "cs.CV",
-        "cs.CY",
-        "cs.DB",
-        "cs.DC",
-        "cs.DL",
-        "cs.DM",
-        "cs.DS",
-        "cs.ET",
-        "cs.FL",
-        "cs.GL",
-        "cs.GR",
-        "cs.GT",
-        "cs.HC",
-        "cs.IR",
-        "cs.IT",
-        "cs.LG",
-        "cs.LO",
-        "cs.MA",
-        "cs.MM",
-        "cs.MS",
-        "cs.NA",
-        "cs.NE",
-        "cs.NI",
-        "cs.OH",
-        "cs.OS",
-        "cs.PF",
-        "cs.PL",
-        "cs.RO",
-        "cs.SC",
-        "cs.SD",
-        "cs.SE",
-        "cs.SI",
-        "cs.SY",
+        "cs.LG",  # Machine Learning
+        "cs.AI",  # Artificial Intelligence
+        "cs.CV",  # Computer Vision
+        "cs.CL",  # Computation and Language/NLP
+        "cs.RO",  # Robotics
+        "cs.CR",  # Cryptography and Security
+    ]
+
+    # Major ML/AI/CS conferences for acceptance detection
+    conferences = [
+        # Top-tier ML/AI
+        "ICLR",
+        "NeurIPS",
+        "ICML",
+        "AAAI",
+        "IJCAI",
+        "AISTATS",
+        "UAI",
+        "COLT",
+        "ALT",
+        # Computer Vision
+        "CVPR",
+        "ICCV",
+        "ECCV",
+        "WACV",
+        "BMVC",
+        "ACCV",
+        "3DV",
+        # NLP
+        "ACL",
+        "EMNLP",
+        "NAACL",
+        "COLING",
+        "EACL",
+        "AACL",
+        "CoNLL",
+        "SemEval",
+        "COLM",
+        # Robotics
+        "ICRA",
+        "IROS",
+        "RSS",
+        "CoRL",
+        "CASE",
+        "HUMANOIDS",
+        # Data Mining & IR
+        "KDD",
+        "SIGIR",
+        "WWW",
+        "WSDM",
+        "CIKM",
+        "ICDM",
+        "SDM",
+        "ECIR",
+        "RecSys",
+        # Databases
+        "SIGMOD",
+        "VLDB",
+        "ICDE",
+        "EDBT",
+        "CIDR",
+        # Speech & Audio
+        "ICASSP",
+        "INTERSPEECH",
+        "ASRU",
+        "SLT",
+        # Medical & Biology
+        "MICCAI",
+        "ISBI",
+        "MIDL",
+        "IPMI",
+        # Multimedia
+        "MM",
+        "ICME",
+        "ICIP",
+        "ICPR",
+        "ICDAR",
+        # General AI
+        "ECAI",
+        "PRICAI",
+        "FLAIRS",
+        # Intelligent Systems
+        "AAMAS",
+        "ITSC",
+        "IV",
+        "ICAPS",
+        "IJCNN",
+        # Security & Privacy
+        "CCS",
+        "NDSS",
+        "USENIX",
+        "Oakland",
+        "SP",
+        # Learning Theory & Optimization
+        "CLeaR",
+        "ICLR",
+        "OPT",
+        # Fairness & Ethics
+        "FAccT",
+        "AIES",
+        # Systems
+        "SOSP",
+        "OSDI",
+        "NSDI",
+        "EuroSys",
+        "ATC",
     ]
 
     def __init__(self, *args, **kwargs):
@@ -76,7 +147,7 @@ class ArxivSpider(scrapy.Spider):
         os.makedirs(results_dir, exist_ok=True)
 
         # Open file using relative path
-        results_file = os.path.join(results_dir, "arxiv_results.csv")
+        results_file = os.path.join(results_dir, "arxiv_results_v2.csv")
 
         # Check if file exists and has content to determine if we need header
         file_exists = os.path.exists(results_file) and os.path.getsize(results_file) > 0
@@ -90,17 +161,114 @@ class ArxivSpider(scrapy.Spider):
         if not file_exists:
             self.writer.writerow(
                 [
-                    "Link/DOI",
+                    "arXiv ID",
+                    "arXiv URL",
+                    "PDF URL",
+                    "DOI",
                     "Publication Date",
+                    "Updated Date",
                     "Title",
                     "Authors",
+                    "Author Affiliations",
                     "Abstract",
                     "Categories",
+                    "Primary Category",
+                    "Comment",
+                    "Journal Reference",
+                ]
+            )
+
+        # Open second file for accepted papers
+        accepted_file = os.path.join(results_dir, "arxiv_results_accepted.csv")
+        accepted_file_exists = (
+            os.path.exists(accepted_file) and os.path.getsize(accepted_file) > 0
+        )
+
+        self.accepted_file = open(accepted_file, "a", newline="", encoding="utf-8")
+        self.accepted_writer = csv.writer(self.accepted_file)
+
+        # Write header for accepted papers file if needed
+        if not accepted_file_exists:
+            self.accepted_writer.writerow(
+                [
+                    "arXiv ID",
+                    "arXiv URL",
+                    "PDF URL",
+                    "DOI",
+                    "Publication Date",
+                    "Updated Date",
+                    "Title",
+                    "Authors",
+                    "Author Affiliations",
+                    "Abstract",
+                    "Categories",
+                    "Primary Category",
+                    "Comment",
+                    "Journal Reference",
                 ]
             )
 
     def close_spider(self, spider):
         self.file.close()
+        self.accepted_file.close()
+
+    def is_accepted_paper(self, comment, journal_ref):
+        """
+        Determine if a paper is accepted based on improved detection logic
+
+        Args:
+            comment: Paper comment field
+            journal_ref: Journal reference field
+
+        Returns:
+            bool: True if paper appears to be accepted
+        """
+        if not comment and not journal_ref:
+            return False
+
+        # Skip workshops explicitly
+        if re.search(r"\bworkshop\b", comment, re.IGNORECASE):
+            return False
+
+        # Check journal reference (strong signal)
+        if journal_ref:
+            return True
+
+        comment_lower = comment.lower()
+
+        # Pattern 1: Explicit acceptance phrases
+        acceptance_patterns = [
+            r"\baccepted\s+(at|to|by|for|in)\b",
+            r"\bto\s+appear\s+(in|at)\b",
+            r"\bto\s+be\s+published\b",
+            r"\bpublished\s+(at|in|by|as)\b",  # Added "as" for "published as"
+            r"\bappear(s|ing|ed)?\s+(at|in)\b",
+            r"\bpresent(ed|ing)?\s+at\b",
+        ]
+
+        for pattern in acceptance_patterns:
+            if re.search(pattern, comment_lower):
+                return True
+
+        # Pattern 2: Conference name + year (strong signal of acceptance)
+        conf_pattern = "|".join(re.escape(conf) for conf in self.conferences)
+        conf_year_pattern = rf"\b({conf_pattern})\s*[:\-]?\s*20[12][0-9]\b"
+        if re.search(conf_year_pattern, comment, re.IGNORECASE):
+            return True
+
+        # Pattern 3: Conference + presentation type
+        conf_context_pattern = (
+            rf"\b({conf_pattern})\s+(camera|poster|oral|spotlight|paper)\b"
+        )
+        if re.search(conf_context_pattern, comment, re.IGNORECASE):
+            return True
+
+        # Pattern 4: "In [Conference]" or "At [Conference]"
+        in_conf_pattern = rf"\b(in|at)\s+({conf_pattern})\b"
+        if re.search(in_conf_pattern, comment, re.IGNORECASE):
+            return True
+
+        return False
 
     def build_api_url(self, start_index=0, category_index=None):
         """Build arXiv API query URL for specific CS subcategory in date range"""
@@ -189,9 +357,23 @@ class ArxivSpider(scrapy.Spider):
                     else ""
                 )
 
-                # Get arXiv URL from the id element
+                # Get arXiv URL and ID from the id element
                 id_elem = entry.find("atom:id", namespaces)
                 arxiv_url = id_elem.text if id_elem is not None else ""
+                # Extract arXiv ID (e.g., "2501.12345" from "http://arxiv.org/abs/2501.12345")
+                arxiv_id = arxiv_url.split("/abs/")[-1] if arxiv_url else ""
+
+                # Get PDF URL from links
+                pdf_url = ""
+                link_elems = entry.findall("atom:link", namespaces)
+                for link in link_elems:
+                    if link.get("title") == "pdf":
+                        pdf_url = link.get("href", "")
+                        break
+
+                # Get DOI
+                doi_elem = entry.find("arxiv:doi", namespaces)
+                doi = doi_elem.text if doi_elem is not None else ""
 
                 # Get published date
                 published_elem = entry.find("atom:published", namespaces)
@@ -203,6 +385,16 @@ class ArxivSpider(scrapy.Spider):
                 else:
                     publication_date = ""
 
+                # Get updated date
+                updated_elem = entry.find("atom:updated", namespaces)
+                if updated_elem is not None:
+                    updated_date = datetime.fromisoformat(
+                        updated_elem.text.replace("Z", "+00:00")
+                    )
+                    updated_date_str = updated_date.date().isoformat()
+                else:
+                    updated_date_str = ""
+
                 # Filter by date range - skip papers outside our range
                 if publication_date:
                     if publication_date < self.start_date:
@@ -213,7 +405,8 @@ class ArxivSpider(scrapy.Spider):
                         )
                         self.logger.info(
                             f"Processed {self.articles_processed} papers total, "
-                            f"fetched {self.articles_fetched} within date range"
+                            f"fetched {self.articles_fetched} within date range "
+                            f"(Preprints: {self.preprints_fetched}, Accepted: {self.accepted_fetched})"
                         )
                         return
                     elif publication_date > self.end_date:
@@ -223,14 +416,24 @@ class ArxivSpider(scrapy.Spider):
                         )
                         continue
 
-                # Get authors
+                # Get authors and their affiliations
                 author_elems = entry.findall("atom:author", namespaces)
                 authors = []
+                affiliations = []
                 for author in author_elems:
                     name_elem = author.find("atom:name", namespaces)
                     if name_elem is not None:
                         authors.append(name_elem.text)
+
+                    # Get affiliation if available
+                    affiliation_elem = author.find("arxiv:affiliation", namespaces)
+                    if affiliation_elem is not None:
+                        affiliations.append(
+                            f"{name_elem.text}: {affiliation_elem.text}"
+                        )
+
                 authors_str = "; ".join(authors)
+                affiliations_str = "; ".join(affiliations) if affiliations else ""
 
                 # Get abstract
                 summary_elem = entry.find("atom:summary", namespaces)
@@ -249,17 +452,93 @@ class ArxivSpider(scrapy.Spider):
                         categories.append(term)
                 categories_str = "; ".join(categories)
 
-                # Write to CSV
-                self.writer.writerow(
-                    [
-                        arxiv_url,
-                        publication_date,
-                        title,
-                        authors_str,
-                        abstract,
-                        categories_str,
-                    ]
+                # Get primary category
+                primary_category_elem = entry.find("arxiv:primary_category", namespaces)
+                primary_category = (
+                    primary_category_elem.get("term")
+                    if primary_category_elem is not None
+                    else ""
                 )
+
+                # Filter: only keep papers where primary category is one of our target categories
+                if primary_category not in self.cs_categories:
+                    self.logger.debug(
+                        f"Skipping paper '{title[:50]}...' - primary category '{primary_category}' not in target categories"
+                    )
+                    continue
+
+                # Get comment (often contains page count, conference info, etc.)
+                comment_elem = entry.find("arxiv:comment", namespaces)
+                comment = (
+                    comment_elem.text.strip().replace("\n", " ")
+                    if comment_elem is not None
+                    else ""
+                )
+
+                # Get journal reference
+                journal_ref_elem = entry.find("arxiv:journal_ref", namespaces)
+                journal_ref = (
+                    journal_ref_elem.text.strip().replace("\n", " ")
+                    if journal_ref_elem is not None
+                    else ""
+                )
+
+                # Use improved acceptance detection
+                is_accepted = self.is_accepted_paper(comment, journal_ref)
+
+                # Skip workshops
+                if comment and "workshop" in comment.lower():
+                    self.logger.debug(
+                        f"Skipping paper '{title[:50]}...' - comment contains 'workshop'"
+                    )
+                    continue
+
+                # Determine which file to write to
+                if is_accepted:
+                    # Write accepted papers to separate file
+                    self.accepted_writer.writerow(
+                        [
+                            arxiv_id,
+                            arxiv_url,
+                            pdf_url,
+                            doi,
+                            publication_date,
+                            updated_date_str,
+                            title,
+                            authors_str,
+                            affiliations_str,
+                            abstract,
+                            categories_str,
+                            primary_category,
+                            comment,
+                            journal_ref,
+                        ]
+                    )
+                    self.accepted_fetched += 1
+                    self.logger.debug(
+                        f"Saved accepted paper '{title[:50]}...' to accepted file"
+                    )
+                else:
+                    # Write preprints to main file
+                    self.writer.writerow(
+                        [
+                            arxiv_id,
+                            arxiv_url,
+                            pdf_url,
+                            doi,
+                            publication_date,
+                            updated_date_str,
+                            title,
+                            authors_str,
+                            affiliations_str,
+                            abstract,
+                            categories_str,
+                            primary_category,
+                            comment,
+                            journal_ref,
+                        ]
+                    )
+                    self.preprints_fetched += 1
 
                 self.articles_fetched += 1
 
@@ -277,7 +556,10 @@ class ArxivSpider(scrapy.Spider):
         # Update start index for next batch
         self.start_index += len(entries)
 
-        self.logger.info(f"Total articles fetched so far: {self.articles_fetched}")
+        self.logger.info(
+            f"Total articles fetched so far: {self.articles_fetched} "
+            f"(Preprints: {self.preprints_fetched}, Accepted: {self.accepted_fetched})"
+        )
 
         # Check if there are more results to fetch
         if self.articles_fetched >= self.max_articles:
@@ -310,7 +592,9 @@ class ArxivSpider(scrapy.Spider):
             if self.current_category_index >= len(self.cs_categories):
                 # All categories exhausted
                 self.logger.info(
-                    f"Finished all {len(self.cs_categories)} categories! Total articles fetched: {self.articles_fetched}"
+                    f"Finished all {len(self.cs_categories)} categories! "
+                    f"Total articles fetched: {self.articles_fetched} "
+                    f"(Preprints: {self.preprints_fetched}, Accepted: {self.accepted_fetched})"
                 )
                 return
 

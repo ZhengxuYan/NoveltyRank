@@ -1,0 +1,11 @@
+{
+  "model_name": "allenai/scibert_scivocab_uncased",
+  "max_len": 512,
+  "use_classification_emb": true,
+  "use_proximity_emb": true,
+  "use_similarity_features": true,
+  "use_class_weights": true,
+  "use_focal_loss": false,
+  "oversample_minority": false,
+  "best_f1": 0.8475894245723172
+}

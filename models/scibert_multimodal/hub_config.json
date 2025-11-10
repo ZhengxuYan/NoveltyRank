@@ -1,0 +1,8 @@
+{
+  "model_name": "allenai/scibert_scivocab_uncased",
+  "max_len": 512,
+  "use_classification_emb": true,
+  "use_proximity_emb": true,
+  "use_similarity_features": true,
+  "export_time_utc": "2025-11-09T05:28:03.377297Z"
+}
