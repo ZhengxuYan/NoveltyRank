@@ -412,6 +412,17 @@ class OpenReviewScraper:
             lambda x: ", ".join(x) if isinstance(x, list) else x
         )
 
+        # Replace newlines in text fields to prevent CSV multiline issues
+        # This prevents papers from spanning multiple rows in the CSV
+        text_columns = ["title", "abstract", "authors", "author_ids", "keywords"]
+        for col in text_columns:
+            if col in df_csv.columns:
+                df_csv[col] = df_csv[col].apply(
+                    lambda x: x.replace("\n", " ").replace("\r", " ")
+                    if isinstance(x, str)
+                    else x
+                )
+
         # Save with proper escaping and quoting
         df_csv.to_csv(
             output_file, index=False, encoding="utf-8", escapechar="\\", quoting=1
@@ -523,23 +534,33 @@ def main():
         df = scraper.save_to_parquet(output_file)
 
     # Print summary statistics
-    print("\n" + "=" * 60)
-    print("Summary Statistics:")
-    print("=" * 60)
-    print(df.groupby("year")["id"].count().rename("papers_per_year"))
+    if df is not None:
+        print("\n" + "=" * 60)
+        print("Summary Statistics:")
+        print("=" * 60)
+        print(df.groupby("year")["id"].count().rename("papers_per_year"))
 
-    if args.fetch_decisions:
-        print("\nDecision breakdown:")
-        print(df["decision"].value_counts())
+        if args.fetch_decisions:
+            print("\nDecision breakdown:")
+            print(df["decision"].value_counts())
 
-    if args.fetch_scores:
-        # Calculate average scores
-        scores_df = df[df["scores"].apply(lambda x: len(x) > 0)]
-        if len(scores_df) > 0:
-            avg_scores = scores_df["scores"].apply(lambda x: sum(x) / len(x))
-            print(f"\nAverage score: {avg_scores.mean():.2f}")
+        if args.fetch_scores:
+            # Calculate average scores
+            scores_df = df[df["scores"].apply(lambda x: len(x) > 0)]
+            if len(scores_df) > 0:
+                avg_scores = scores_df["scores"].apply(lambda x: sum(x) / len(x))
+                print(f"\nAverage score: {avg_scores.mean():.2f}")
 
-    print("\n")
+        print("\n")
+    else:
+        print("\n" + "=" * 60)
+        print("ERROR: No papers found!")
+        print("=" * 60)
+        print(f"The conference '{args.conference}' may not be hosted on OpenReview.")
+        print("Conferences known to work: ICLR, NeurIPS, ICML, CoRL, TMLR")
+        print("Conferences NOT on OpenReview: CVPR, ECCV, ICCV, ACL, EMNLP")
+        print("=" * 60)
+        print("\n")
 
 
 if __name__ == "__main__":

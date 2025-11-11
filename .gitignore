@@ -15,6 +15,11 @@ results/
 # Parquet Files (uncomment if you want to ignore these too)
 *.parquet
 
+*.pkl
+*.pth
+*.safetensors
+
+
 # Python Cache
 __pycache__/
 *.py[cod]

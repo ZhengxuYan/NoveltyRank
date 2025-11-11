@@ -67,13 +67,13 @@ def main():
     parser.add_argument(
         "--input",
         type=str,
-        default="results/arxiv_results.csv",
+        default="results/arxiv_results_v2.csv",
         help="Input CSV file (default: results/arxiv_results.csv)",
     )
     parser.add_argument(
         "--output",
         type=str,
-        default="results/arxiv_results_filtered.csv",
+        default="results/arxiv_results_v2_filtered.csv",
         help="Output CSV file (default: results/arxiv_results_filtered.csv)",
     )
     parser.add_argument(
