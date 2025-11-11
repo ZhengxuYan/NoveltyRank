@@ -21,7 +21,7 @@ from models.Qwen_4B.sft_env import NoveltyRankSFTDataBuilder, AccuracyOnLabeledT
     
 def build_config(
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
-    log_path: str = "results/noveltyrank_sft_hf",
+    log_path: str = "results/noveltyrank_sft_hf_v3",
     dataset_path: str = "JasonYan777/novelty-dataset",
     max_length: int = 4096,
     learning_rate: float = 2e-4,
@@ -29,7 +29,7 @@ def build_config(
     num_epochs: int = 5,
     eval_every: int = 24,
     wandb_project: str = "NoveltyRank",
-    wandb_name: str = "4b_sft_from_hf",
+    wandb_name: str = "4b_sft_from_hf_v3",
 ) -> train.Config:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     common_config = ChatDatasetBuilderCommonConfig(
