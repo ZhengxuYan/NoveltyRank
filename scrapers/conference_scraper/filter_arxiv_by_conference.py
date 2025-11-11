@@ -1,30 +1,3 @@
-"""
-Filter arXiv papers by conference acceptance
-
-This script filters papers from arxiv_results_accepted.csv that were accepted
-at top ML/AI/CV/NLP conferences.
-
-Supported conferences:
-- NeurIPS (Neural Information Processing Systems)
-- ICML (International Conference on Machine Learning)
-- ICLR (International Conference on Learning Representations)
-- AAAI (Association for the Advancement of Artificial Intelligence)
-- CVPR (Computer Vision and Pattern Recognition)
-- ICCV (International Conference on Computer Vision)
-- ACL (Association for Computational Linguistics)
-- EMNLP (Empirical Methods in Natural Language Processing)
-
-Usage:
-    # Filter all conferences
-    python filter_arxiv_by_conference.py
-
-    # Filter specific conferences
-    python filter_arxiv_by_conference.py --conferences neurips icml iclr
-
-    # Specify custom input/output paths
-    python filter_arxiv_by_conference.py --input custom.csv --output filtered.csv
-"""
-
 import pandas as pd
 import re
 from datetime import datetime
@@ -40,7 +13,7 @@ class ConferenceFilter:
         "neurips": [
             r"neurips",
             r"neural information processing systems",
-            r"\bnips\b",  # word boundary to avoid matching "snippets"
+            r"\bnips\b",
         ],
         "icml": [
             r"icml",
@@ -64,7 +37,7 @@ class ConferenceFilter:
             r"international conference on computer vision",
         ],
         "acl": [
-            r"\bacl\b",  # word boundary to avoid false positives
+            r"\bacl\b",
             r"association for computational linguistics",
             r"annual meeting.*association for computational linguistics",
         ],
@@ -105,16 +78,6 @@ class ConferenceFilter:
         self.conference_counts = {conf: 0 for conf in self.conferences}
 
     def matches_conference(self, text, conference):
-        """
-        Check if text mentions a specific conference
-
-        Args:
-            text: Text to search (comment or journal reference)
-            conference: Conference name to look for
-
-        Returns:
-            bool: True if conference is mentioned
-        """
         if pd.isna(text) or not text:
             return False
 
@@ -128,19 +91,9 @@ class ConferenceFilter:
         return False
 
     def classify_paper(self, row):
-        """
-        Classify which conference(s) a paper belongs to
-
-        Args:
-            row: DataFrame row with paper data
-
-        Returns:
-            list: List of conference names the paper was accepted at
-        """
         comment = row.get("Comment", "")
         journal_ref = row.get("Journal Reference", "")
 
-        # Combine both fields for searching
         search_text = f"{comment} {journal_ref}"
 
         matched_conferences = []
@@ -151,7 +104,6 @@ class ConferenceFilter:
         return matched_conferences
 
     def filter_papers(self):
-        """Filter papers by conference acceptance"""
         print(f"Loading papers from {self.input_csv}...")
         df = pd.read_csv(self.input_csv)
         self.total_papers = len(df)
@@ -162,7 +114,6 @@ class ConferenceFilter:
         )
         print("=" * 80)
 
-        # Add a column to store matched conferences
         matched_conferences_list = []
         filtered_rows = []
 
@@ -178,22 +129,17 @@ class ConferenceFilter:
                 )
                 filtered_rows.append(idx)
 
-                # Update counts
                 for conf in conferences:
                     self.conference_counts[conf] += 1
                 self.filtered_papers += 1
 
-        # Create filtered dataframe
         filtered_df = df.loc[filtered_rows].copy()
         filtered_df["Matched Conferences"] = matched_conferences_list
 
-        # Create output directory
         os.makedirs("results", exist_ok=True)
 
-        # Save to CSV
         filtered_df.to_csv(self.output_csv, index=False)
 
-        # Print statistics
         print("\n" + "=" * 80)
         print("FILTERING COMPLETE")
         print("=" * 80)
@@ -211,7 +157,6 @@ class ConferenceFilter:
 
 
 def main():
-    """Main function"""
     parser = argparse.ArgumentParser(
         description="Filter arXiv papers by conference acceptance"
     )
@@ -238,14 +183,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Initialize filter
     filter_obj = ConferenceFilter(
         input_csv=args.input,
         output_csv=args.output,
         conferences=args.conferences,
     )
 
-    # Filter papers
     filter_obj.filter_papers()
 
 

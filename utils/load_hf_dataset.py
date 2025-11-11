@@ -1,12 +1,3 @@
-"""
-Load dataset from Hugging Face and convert JSON strings back to dictionaries
-
-This helper script:
-1. Loads the dataset from Hugging Face Hub
-2. Converts JSON string columns back to dictionaries/lists
-3. Optionally saves as pickle files
-"""
-
 import json
 import pandas as pd
 from datasets import load_dataset

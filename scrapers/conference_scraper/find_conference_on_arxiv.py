@@ -1,26 +1,3 @@
-"""
-Find conference accepted papers on arXiv
-
-This script:
-1. Reads conference papers CSV (ICLR, NeurIPS, ICML, etc.)
-2. Filters for accepted papers by year(s)
-3. Searches each paper on arXiv by title
-4. Outputs results in the same format as arxiv_scraper output
-
-Usage examples:
-    # ICLR papers from 2024
-    python find_iclr_on_arxiv.py --conference iclr --year 2024
-
-    # NeurIPS papers from 2024 and 2025
-    python find_iclr_on_arxiv.py --conference neurips --year 2024 2025
-
-    # ICML papers from all years
-    python find_iclr_on_arxiv.py --conference icml --all-years
-
-    # All papers (not just accepted)
-    python find_iclr_on_arxiv.py --conference neurips --year 2024 --all-papers
-"""
-
 import pandas as pd
 import requests
 import time
@@ -32,20 +9,9 @@ import os
 
 
 class ConferenceArxivMatcher:
-    """Match conference papers with arXiv versions"""
-
     def __init__(
         self, conference_csv_path, conference_name, output_csv_path=None, year=None
     ):
-        """
-        Initialize the matcher
-
-        Args:
-            conference_csv_path: Path to conference papers CSV
-            conference_name: Name of conference (e.g., 'iclr', 'neurips', 'icml')
-            output_csv_path: Path for output CSV (auto-generated if None)
-            year: Year for output filename (only used if output_csv_path is None)
-        """
         self.conference_csv_path = conference_csv_path
         self.conference_name = conference_name.lower()
 
@@ -58,30 +24,20 @@ class ConferenceArxivMatcher:
         else:
             self.output_csv_path = output_csv_path
 
-        # arXiv API settings
         self.arxiv_api_url = "https://export.arxiv.org/api/query"
-        self.request_delay = 3  # arXiv recommends 3 seconds between requests
+        self.request_delay = 3
 
-        # Statistics
         self.papers_checked = 0
         self.papers_found = 0
         self.papers_not_found = 0
 
     def load_conference_papers(self, year=None, accept_only=True):
-        """
-        Load and filter conference papers
-
-        Args:
-            year: Year to filter (int or list of ints). If None, loads all years.
-            accept_only: If True, only load accepted papers
-        """
         print(
             f"Loading {self.conference_name.upper()} papers from {self.conference_csv_path}..."
         )
         df = pd.read_csv(self.conference_csv_path)
         print(f"Total papers in dataset: {len(df)}")
 
-        # Filter by year
         if year is not None:
             if isinstance(year, list):
                 df = df[df["year"].isin(year)]
@@ -92,7 +48,6 @@ class ConferenceArxivMatcher:
         else:
             print("Loading papers from all years")
 
-        # Filter by decision (accepted papers only)
         if accept_only:
             df = df[df["decision"].str.contains("Accept", na=False, case=False)]
             print(f"Found {len(df)} accepted papers")
@@ -100,25 +55,13 @@ class ConferenceArxivMatcher:
         return df
 
     def search_arxiv_by_title(self, title, fuzzy=True):
-        """
-        Search arXiv by paper title
-
-        Args:
-            title: Paper title to search for
-            fuzzy: If True and exact match fails, try fuzzy matching
-
-        Returns:
-            dict: Paper metadata if found, None otherwise
-        """
-        # Clean up title for search
         title_clean = title.strip()
 
-        # Try exact match first
         search_query = f'ti:"{title_clean}"'
         params = {
             "search_query": search_query,
             "start": 0,
-            "max_results": 5,  # Get top 5 results to check for fuzzy matches
+            "max_results": 5,
         }
 
         url = f"{self.arxiv_api_url}?{urllib.parse.urlencode(params)}"
@@ -127,26 +70,19 @@ class ConferenceArxivMatcher:
             response = requests.get(url)
             response.raise_for_status()
 
-            # Parse XML response
             root = ET.fromstring(response.content)
 
-            # Define namespaces
             namespaces = {
                 "atom": "http://www.w3.org/2005/Atom",
                 "arxiv": "http://arxiv.org/schemas/atom",
             }
 
-            # Get entries
             entries = root.findall("atom:entry", namespaces)
 
             if len(entries) == 0:
-                # If no exact match and fuzzy is enabled, try without quotes
                 if fuzzy:
-                    # Extract key words from title (remove common words)
                     title_words = title_clean.lower().split()
-                    key_words = [w for w in title_words if len(w) > 3][
-                        :5
-                    ]  # First 5 words > 3 chars
+                    key_words = [w for w in title_words if len(w) > 3][:5]
 
                     if len(key_words) >= 2:
                         # Search with key words

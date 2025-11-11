@@ -1,22 +1,3 @@
-"""
-Update existing Hugging Face dataset with new columns (embeddings, similarity features)
-
-This script:
-1. Loads pickle files with additional columns (embeddings, similarity features)
-2. Converts numpy arrays to lists (HuggingFace requirement)
-3. Converts dictionary columns with variable keys to JSON strings
-4. Pushes the updated dataset back to Hugging Face Hub
-5. Maintains the same train/test split structure
-
-IMPORTANT DATA FORMAT CONVERSIONS:
-- Classification_embedding: numpy.ndarray → list
-- Proximity_embedding: numpy.ndarray → list
-- top_10_similar: dict → JSON string (because keys vary per row)
-
-To load the dataset and convert back to original format, use:
-    python scripts/load_hf_dataset.py --repo YOUR_REPO_NAME
-"""
-
 import pickle
 import argparse
 import pandas as pd
@@ -26,16 +7,6 @@ import os
 
 
 def load_pickle_data(train_path, test_path):
-    """
-    Load train and test pickle files
-
-    Args:
-        train_path: Path to train pickle file
-        test_path: Path to test pickle file
-
-    Returns:
-        tuple: (train_df, test_df)
-    """
     print("=" * 60)
     print("Loading pickle files...")
     print("=" * 60)
@@ -54,15 +25,6 @@ def load_pickle_data(train_path, test_path):
 
 
 def convert_numpy_to_list(df):
-    """
-    Convert numpy arrays to lists for HuggingFace compatibility
-
-    Args:
-        df: pandas DataFrame
-
-    Returns:
-        pandas DataFrame with numpy arrays converted to lists
-    """
     print("\n" + "=" * 60)
     print("Converting numpy arrays to lists...")
     print("=" * 60)
@@ -89,18 +51,6 @@ def convert_numpy_to_list(df):
 
 
 def convert_dict_to_json_string(df):
-    """
-    Convert dictionary columns to JSON strings for HuggingFace compatibility
-
-    HuggingFace datasets cannot handle dictionaries with variable keys.
-    We convert the top_10_similar dict to a JSON string.
-
-    Args:
-        df: pandas DataFrame
-
-    Returns:
-        pandas DataFrame with dictionaries converted to JSON strings
-    """
     import json
 
     print("\n" + "=" * 60)
@@ -126,17 +76,6 @@ def convert_dict_to_json_string(df):
 def upload_to_huggingface(
     train_df, test_df, repo_name, hf_token=None, private=True, convert_arrays=True
 ):
-    """
-    Upload dataset to Hugging Face Hub
-
-    Args:
-        train_df: Training DataFrame
-        test_df: Test DataFrame
-        repo_name: HuggingFace repository name (e.g., 'username/dataset-name')
-        hf_token: HuggingFace API token
-        private: Whether to keep the dataset private
-        convert_arrays: Whether to convert numpy arrays to lists
-    """
     # Authenticate
     if hf_token is None:
         hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN")
