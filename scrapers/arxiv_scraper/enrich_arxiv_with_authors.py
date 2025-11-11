@@ -1,8 +1,3 @@
-"""
-Enrich ArXiv dataset with comprehensive Semantic Scholar author information
-Optimized for novelty ranking features
-"""
-
 import sys
 import os
 
@@ -17,11 +12,9 @@ from semantic_scholar_author import SemanticScholarAuthor
 
 
 def parse_author_names(author_string):
-    """Parse semicolon or comma-separated author names"""
     if pd.isna(author_string) or author_string == "":
         return []
 
-    # ArXiv uses semicolons
     if ";" in author_string:
         separator = ";"
     else:
@@ -31,7 +24,6 @@ def parse_author_names(author_string):
 
 
 def calculate_author_career_metrics(papers_info):
-    """Calculate career-stage metrics from author's papers"""
     if not papers_info or "papers" not in papers_info:
         return {}
 
@@ -39,12 +31,10 @@ def calculate_author_career_metrics(papers_info):
     if not papers:
         return {}
 
-    # Extract years
     years = [p.get("year") for p in papers if p.get("year")]
     if not years:
         return {}
 
-    # Extract citations
     citations = [p.get("citationCount", 0) for p in papers]
 
     current_year = datetime.now().year
@@ -52,13 +42,11 @@ def calculate_author_career_metrics(papers_info):
     last_year = max(years)
     years_active = last_year - first_year + 1
 
-    # Recent productivity (last 3 years)
     recent_papers = [
         p for p in papers if p.get("year") and p.get("year") >= current_year - 3
     ]
     recent_paper_count = len(recent_papers)
 
-    # Citation metrics
     total_citations = sum(citations)
     avg_citations_per_paper = total_citations / len(papers) if papers else 0
     max_paper_citations = max(citations) if citations else 0
@@ -67,8 +55,8 @@ def calculate_author_career_metrics(papers_info):
         "years_active": years_active,
         "first_pub_year": first_year,
         "last_pub_year": last_year,
-        "career_stage": current_year - first_year,  # Years since first paper
-        "recent_productivity": recent_paper_count,  # Papers in last 3 years
+        "career_stage": current_year - first_year,
+        "recent_productivity": recent_paper_count,
         "avg_citations_per_paper": avg_citations_per_paper,
         "max_paper_citations": max_paper_citations,
         "total_citations": total_citations,
@@ -77,16 +65,6 @@ def calculate_author_career_metrics(papers_info):
 
 
 def fetch_comprehensive_author_info(author_name, fetcher):
-    """
-    Fetch comprehensive author information for novelty ranking
-
-    Returns dict with:
-    - Basic info: h-index, citations, papers
-    - Career metrics: years active, career stage, productivity
-    - Quality metrics: avg citations per paper
-    - Research fields (if available)
-    """
-    # Search for author
     results = fetcher.search_author_by_name(author_name, limit=1)
 
     if not results:
@@ -95,39 +73,25 @@ def fetch_comprehensive_author_info(author_name, fetcher):
     author = results[0]
     author_id = author.get("authorId")
 
-    # Get papers separately to avoid API issues
     papers = fetcher.get_author_papers(author_id, limit=100)
 
-    # Add papers to detailed info
     detailed = author.copy()
     detailed["papers"] = papers
 
-    # Calculate career metrics
     career_metrics = calculate_author_career_metrics(detailed)
 
-    # Fields are not reliably available, skip for now
-    fields = set()
-
-    # Combine all information
     comprehensive_info = {
-        # Basic Semantic Scholar info
         "semantic_scholar_id": detailed.get("authorId"),
         "name": detailed.get("name"),
         "affiliations": ", ".join(detailed.get("affiliations", [])),
-        # Core metrics
         "h_index": detailed.get("hIndex"),
         "citation_count": detailed.get("citationCount"),
         "paper_count": detailed.get("paperCount"),
-        # Career stage metrics (valuable for novelty!)
         "years_active": career_metrics.get("years_active"),
         "first_pub_year": career_metrics.get("first_pub_year"),
         "last_pub_year": career_metrics.get("last_pub_year"),
-        "career_stage": career_metrics.get("career_stage"),  # Years since first paper
-        # Productivity metrics
-        "recent_productivity": career_metrics.get(
-            "recent_productivity"
-        ),  # Last 3 years
-        # Quality metrics
+        "career_stage": career_metrics.get("career_stage"),
+        "recent_productivity": career_metrics.get("recent_productivity"),
         "avg_citations_per_paper": career_metrics.get("avg_citations_per_paper"),
         "max_paper_citations": career_metrics.get("max_paper_citations"),
     }
@@ -144,28 +108,10 @@ def enrich_arxiv_with_authors(
     delay=1.0,
     resume=True,
 ):
-    """
-    Enrich ArXiv dataset with comprehensive author information
-
-    Args:
-        input_file: Path to arxiv CSV
-        output_file: Path to save enriched CSV
-        cache_file: Path to cache author info (to resume if interrupted)
-        api_key: Semantic Scholar API key
-        sample_size: Process only N papers (for testing)
-        delay: Delay between API requests
-        resume: Resume from cache if available
-    """
-    print("\n" + "=" * 80)
-    print("ARXIV AUTHOR ENRICHMENT FOR NOVELTY RANKING")
-    print("=" * 80)
-
-    # Load data
-    print(f"\nLoading papers from {input_file}...")
+    print(f"Loading papers from {input_file}...")
     df = pd.read_csv(input_file)
     print(f"Loaded {len(df)} papers")
 
-    # Find author column
     author_col = None
     for col in df.columns:
         if col.lower() == "authors":
@@ -177,13 +123,11 @@ def enrich_arxiv_with_authors(
 
     print(f"Using column '{author_col}' for author information")
 
-    # Sample if requested
     if sample_size and sample_size < len(df):
         print(f"Sampling {sample_size} papers for testing...")
         df = df.head(sample_size)
 
-    # Extract unique authors
-    print("\nExtracting unique authors...")
+    print("Extracting unique authors...")
     all_authors = set()
     for author_string in df[author_col]:
         authors = parse_author_names(author_string)
@@ -192,63 +136,56 @@ def enrich_arxiv_with_authors(
     all_authors = sorted(list(all_authors))
     print(f"Found {len(all_authors)} unique authors")
 
-    # Set up cache
     if cache_file is None:
         cache_file = input_file.replace(".csv", "_author_cache.pkl")
 
-    # Load cache if resuming
     author_info = {}
     if resume and os.path.exists(cache_file):
-        print(f"\nLoading cached author data from {cache_file}...")
+        print(f"Loading cached author data from {cache_file}...")
         with open(cache_file, "rb") as f:
             author_info = pickle.load(f)
         print(f"Loaded {len(author_info)} cached authors")
 
-    # Fetch author information
     fetcher = SemanticScholarAuthor(api_key=api_key)
     fetcher.request_delay = delay
 
     remaining_authors = [a for a in all_authors if a not in author_info]
 
     if remaining_authors:
-        print(f"\nFetching info for {len(remaining_authors)} authors...")
+        print(f"Fetching info for {len(remaining_authors)} authors...")
         print(
             f"Estimated time: ~{len(remaining_authors) * delay / 60:.1f} minutes (~{len(remaining_authors) * delay / 3600:.1f} hours)"
         )
 
         if api_key is None:
-            print(f"\n⚠️  WARNING: No API key provided!")
+            print(f"WARNING: No API key provided!")
             print(
-                f"   Free tier limit: 100 requests per 5 minutes (3 seconds per request)"
+                f"Free tier limit: 100 requests per 5 minutes (3 seconds per request)"
             )
-            print(f"   Current delay: {delay} seconds")
+            print(f"Current delay: {delay} seconds")
             if delay < 3.0:
-                print(f"   ⚠️  DELAY TOO SHORT! You will get rate limited.")
-                print(f"   Recommendation: Use --delay 3.5 or get an API key")
+                print(f"DELAY TOO SHORT! You will get rate limited.")
+                print(f"Recommendation: Use --delay 3.5 or get an API key")
         else:
             print(
-                f"   With API key: 5,000 requests per 5 minutes (0.06 seconds per request)"
+                f"With API key: 5,000 requests per 5 minutes (0.06 seconds per request)"
             )
 
-        print(f"\n(Progress: . = 10 authors, * = 100 authors)")
+        print(f"(Progress: . = 10 authors, * = 100 authors)")
 
         for i, author_name in enumerate(remaining_authors):
-            # Progress indicator
             if (i + 1) % 100 == 0:
                 print("*", end="", flush=True)
-                # Save cache every 100 authors
                 with open(cache_file, "wb") as f:
                     pickle.dump(author_info, f)
             elif (i + 1) % 10 == 0:
                 print(".", end="", flush=True)
 
-            # Fetch comprehensive info
             info = fetch_comprehensive_author_info(author_name, fetcher)
 
             if info:
                 author_info[author_name] = info
             else:
-                # Author not found - store placeholder
                 author_info[author_name] = {
                     "semantic_scholar_id": None,
                     "name": author_name,
@@ -261,29 +198,22 @@ def enrich_arxiv_with_authors(
                     "avg_citations_per_paper": None,
                 }
 
-        print("\n")
+        print()
 
-        # Save final cache
         print(f"Saving author cache to {cache_file}...")
         with open(cache_file, "wb") as f:
             pickle.dump(author_info, f)
 
-    # Calculate statistics
     found_count = sum(
         1 for v in author_info.values() if v.get("semantic_scholar_id") is not None
     )
     print(
-        f"\nSuccessfully fetched info for {found_count}/{len(all_authors)} authors ({found_count/len(all_authors)*100:.1f}%)"
+        f"Successfully fetched info for {found_count}/{len(all_authors)} authors ({found_count/len(all_authors)*100:.1f}%)"
     )
 
-    # Enrich papers with author metrics
-    print("\nCalculating paper-level author features for novelty ranking...")
+    print("Calculating paper-level author features...")
 
     def calculate_paper_author_features(author_string):
-        """
-        Calculate comprehensive author features for a paper
-        Features designed for novelty ranking
-        """
         authors = parse_author_names(author_string)
 
         if not authors:
@@ -309,11 +239,10 @@ def enrich_arxiv_with_authors(
                     "max_avg_paper_citations",
                     "avg_avg_paper_citations",
                     "author_diversity_score",
-                    "has_top_author",  # h-index > 50
+                    "has_top_author",
                 ]
             }
 
-        # Extract metrics
         h_indices = []
         citations = []
         career_stages = []
@@ -334,20 +263,16 @@ def enrich_arxiv_with_authors(
                 if info.get("avg_citations_per_paper") is not None:
                     avg_paper_citations.append(info["avg_citations_per_paper"])
 
-        # Calculate features
         features = {
             "num_authors": len(authors),
-            # H-index features
             "max_h_index": max(h_indices) if h_indices else None,
             "avg_h_index": np.mean(h_indices) if h_indices else None,
             "min_h_index": min(h_indices) if h_indices else None,
             "first_author_h_index": author_info.get(authors[0], {}).get("h_index"),
             "last_author_h_index": author_info.get(authors[-1], {}).get("h_index"),
-            # Citation features
             "max_citations": max(citations) if citations else None,
             "avg_citations": np.mean(citations) if citations else None,
             "total_author_citations": sum(citations) if citations else None,
-            # Career stage features (important for novelty!)
             "max_career_stage": max(career_stages) if career_stages else None,
             "avg_career_stage": np.mean(career_stages) if career_stages else None,
             "min_career_stage": min(career_stages) if career_stages else None,
@@ -357,74 +282,54 @@ def enrich_arxiv_with_authors(
             "has_senior_author": any(s >= 20 for s in career_stages)
             if career_stages
             else None,
-            # Productivity features
             "max_recent_productivity": max(recent_productivities)
             if recent_productivities
             else None,
             "avg_recent_productivity": np.mean(recent_productivities)
             if recent_productivities
             else None,
-            # Quality features
             "max_avg_paper_citations": max(avg_paper_citations)
             if avg_paper_citations
             else None,
             "avg_avg_paper_citations": np.mean(avg_paper_citations)
             if avg_paper_citations
             else None,
-            # Diversity features
             "author_diversity_score": np.std(h_indices) if len(h_indices) > 1 else 0,
-            # Top author indicator
             "has_top_author": any(h >= 50 for h in h_indices) if h_indices else False,
         }
 
         return features
 
-    # Apply feature calculation
     features_list = df[author_col].apply(calculate_paper_author_features)
     features_df = pd.DataFrame(features_list.tolist())
 
-    # Combine with original dataframe
     df_enriched = pd.concat([df, features_df], axis=1)
 
-    # Generate output filename
     if output_file is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = input_file.replace(".csv", f"_enriched_{timestamp}.csv")
 
-    # Save enriched data
-    print(f"\nSaving enriched data to {output_file}...")
+    print(f"Saving enriched data to {output_file}...")
     df_enriched.to_csv(output_file, index=False)
 
-    # Print summary statistics
-    print("\n" + "=" * 80)
-    print("ENRICHMENT SUMMARY")
-    print("=" * 80)
+    print("\nEnrichment Summary")
     print(f"Total papers: {len(df_enriched)}")
     print(f"Total unique authors: {len(all_authors)}")
     print(
         f"Authors found in Semantic Scholar: {found_count} ({found_count/len(all_authors)*100:.1f}%)"
     )
 
-    print(f"\nAuthor features added (for novelty ranking):")
-    print(f"  Basic: num_authors, h-indices, citations")
-    print(f"  Career: career_stage, early_career, senior_author")
-    print(f"  Quality: avg_citations_per_paper")
-    print(f"  Productivity: recent_productivity")
-    print(f"  Diversity: author_diversity_score")
-    print(f"  Flags: has_top_author, has_early_career_author")
-
-    # Show statistics
     print(
-        f"\nPapers with author metrics: {features_df['max_h_index'].notna().sum()}/{len(df_enriched)} ({features_df['max_h_index'].notna().sum()/len(df_enriched)*100:.1f}%)"
+        f"Papers with author metrics: {features_df['max_h_index'].notna().sum()}/{len(df_enriched)} ({features_df['max_h_index'].notna().sum()/len(df_enriched)*100:.1f}%)"
     )
 
     if features_df["max_h_index"].notna().any():
-        print(f"\nH-index statistics:")
+        print(f"H-index statistics:")
         print(f"  Max h-index mean: {features_df['max_h_index'].mean():.2f}")
         print(f"  Max h-index median: {features_df['max_h_index'].median():.2f}")
         print(f"  Max h-index max: {features_df['max_h_index'].max():.0f}")
 
-        print(f"\nCareer stage statistics:")
+        print(f"Career stage statistics:")
         print(
             f"  Avg career stage mean: {features_df['avg_career_stage'].mean():.2f} years"
         )
@@ -435,8 +340,6 @@ def enrich_arxiv_with_authors(
         print(
             f"  Papers with top authors (h>50): {features_df['has_top_author'].sum()}"
         )
-
-    print("=" * 80)
 
     return df_enriched, author_info
 

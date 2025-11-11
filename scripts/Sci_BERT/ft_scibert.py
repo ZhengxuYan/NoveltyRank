@@ -1,20 +1,3 @@
-"""
-Fine-tune SciBERT for Binary Classification (Paper Acceptance Prediction)
-
-This script combines:
-1. Text features (Title, Abstract, Categories) processed by SciBERT
-2. Pre-computed SPECTER2 embeddings (Classification + Proximity)
-3. Similarity features (max_similarity, avg_similarity)
-4. Aggregated embeddings from top 10 similar papers
-
-Model Architecture:
-- SciBERT encoder for text → 768-dim
-- Concatenate with Classification_embedding (768-dim) + Proximity_embedding (768-dim)
-- Add similarity features (2-dim)
-- Add aggregated similar papers embedding (768-dim)
-- Total: 768 + 768 + 768 + 2 + 768 = 3074-dim → Classification head
-"""
-
 import os
 import json
 import argparse
@@ -40,53 +23,37 @@ from tqdm import tqdm
 warnings.simplefilter("ignore")
 
 
-# ======================== Configuration ========================
-
-
 class Config:
-    # Data Source
     DATASET_NAME = "JasonYan777/novelty-rank-with-similarities"
     MODEL_SAVE_DIR = "models/scibert_multimodal"
 
-    # Model
     SCIBERT_MODEL = "allenai/scibert_scivocab_uncased"
     MAX_LEN = 512
 
-    # Training (Optimized for M4 Max MacBook Pro)
-    # M4 Max has excellent unified memory and GPU - can handle larger batches
-    TRAIN_BATCH_SIZE = 32  # Increased for M4 Max (can go even higher)
-    VALID_BATCH_SIZE = 64  # Increased for faster evaluation
+    TRAIN_BATCH_SIZE = 32
+    VALID_BATCH_SIZE = 64
     EPOCHS = 5
     LEARNING_RATE = 2e-5
     WARMUP_RATIO = 0.1
     WEIGHT_DECAY = 0.01
 
-    # Features
     USE_CLASSIFICATION_EMB = True
     USE_PROXIMITY_EMB = True
     USE_SIMILARITY_FEATURES = True
-    USE_SIMILAR_PAPERS_EMB = True  # Aggregate embeddings from top 10 similar papers
-    SIMILAR_PAPERS_AGGREGATION = "max"  # Options: "mean", "max"
+    USE_SIMILAR_PAPERS_EMB = True
+    SIMILAR_PAPERS_AGGREGATION = "max"
 
-    # Class Imbalance Handling
-    USE_CLASS_WEIGHTS = True  # Weight loss by inverse class frequency
-    USE_FOCAL_LOSS = False  # Alternative to class weights (set to True to use instead)
-    FOCAL_LOSS_GAMMA = 2.0  # Focus more on hard examples
-    OVERSAMPLE_MINORITY = False  # Oversample positive class (can slow training)
+    USE_CLASS_WEIGHTS = True
+    USE_FOCAL_LOSS = False
+    FOCAL_LOSS_GAMMA = 2.0
+    OVERSAMPLE_MINORITY = False
 
-    # Other
     RANDOM_SEED = 42
-    GRADIENT_ACCUMULATION_STEPS = (
-        1  # M4 Max can handle larger batches, less accumulation needed
-    )
+    GRADIENT_ACCUMULATION_STEPS = 1
     MAX_GRAD_NORM = 1.0
 
 
-# ======================== Device Setup ========================
-
-
 def set_seed(seed):
-    """Set random seeds for reproducibility"""
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -94,16 +61,15 @@ def set_seed(seed):
 
 
 def get_device():
-    """Get best available device"""
     if torch.backends.mps.is_available():
         device = torch.device("mps")
-        print("🚀 Using Apple M-series GPU (MPS)")
+        print("Using Apple M-series GPU (MPS)")
     elif torch.cuda.is_available():
         device = torch.device("cuda")
-        print(f"🚀 Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
     else:
         device = torch.device("cpu")
-        print("💻 Using CPU")
+        print("Using CPU")
     return device
 
 

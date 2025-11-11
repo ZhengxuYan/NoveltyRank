@@ -1,12 +1,3 @@
-"""
-Script to create and upload labeled datasets to Hugging Face Hub
-
-This script takes positive and negative datapoints from files, adds labels,
-and uploads the combined dataset to Hugging Face.
-
-Supported file formats: CSV, JSON, Parquet
-"""
-
 import os
 import argparse
 import pandas as pd
@@ -16,21 +7,11 @@ from pathlib import Path
 
 
 class DatasetCreator:
-    """Create and upload labeled datasets to Hugging Face"""
-
     def __init__(self, hf_token=None):
-        """
-        Initialize the dataset creator
-
-        Args:
-            hf_token: Hugging Face API token (if None, will check environment or prompt)
-        """
         self.hf_token = hf_token
         self._authenticate()
 
     def _authenticate(self):
-        """Authenticate with Hugging Face"""
-        # Try to get token from various sources
         if self.hf_token is None:
             self.hf_token = os.environ.get("HF_TOKEN") or os.environ.get(
                 "HUGGINGFACE_TOKEN"
@@ -39,21 +20,12 @@ class DatasetCreator:
         if self.hf_token:
             print("Authenticating with Hugging Face...")
             login(token=self.hf_token)
-            print("✓ Authentication successful!")
+            print("Authentication successful!")
         else:
             print("No HF token provided. You may be prompted to login.")
             print("Set HF_TOKEN environment variable or use --hf-token argument.")
 
     def load_file(self, file_path):
-        """
-        Load data from a file (CSV, JSON, or Parquet)
-
-        Args:
-            file_path: Path to the file
-
-        Returns:
-            pandas.DataFrame: Loaded data
-        """
         file_path = Path(file_path)
 
         if not file_path.exists():
@@ -61,7 +33,6 @@ class DatasetCreator:
 
         print(f"Loading {file_path.name}...")
 
-        # Determine file type and load accordingly
         if file_path.suffix.lower() == ".csv":
             df = pd.read_csv(file_path)
         elif file_path.suffix.lower() == ".json":
@@ -75,21 +46,9 @@ class DatasetCreator:
         return df
 
     def parse_file_source_pairs(self, file_specs, default_source):
-        """
-        Parse file specifications that can be either 'path', 'path:source', or 'path:@column_name'
-
-        Args:
-            file_specs: List of file specifications
-            default_source: Default source name if not specified
-
-        Returns:
-            List of tuples: [(file_path, source_name_or_column), ...]
-            If source starts with '@', it's a column name to extract from
-        """
         parsed = []
         for spec in file_specs:
             if ":" in spec:
-                # Split on first colon only
                 parts = spec.split(":", 1)
                 file_path = parts[0]
                 source = parts[1]
@@ -108,27 +67,10 @@ class DatasetCreator:
         default_positive_source="Positive",
         default_negative_source="Random",
     ):
-        """
-        Create a labeled dataset from positive and negative files
-
-        Args:
-            positive_files: List of file paths or 'path:source' pairs for positive examples
-            negative_files: List of file paths or 'path:source' pairs for negative examples
-            label_column: Name of the label column (default: 'label')
-            source_column: Name of the source column (default: 'source')
-            default_positive_source: Default source for positive examples if not specified
-            default_negative_source: Default source for negative examples if not specified
-
-        Returns:
-            pandas.DataFrame: Combined labeled dataset
-        """
         all_data = []
 
-        # Load positive examples
         if positive_files:
-            print("\n" + "=" * 60)
-            print("Loading POSITIVE examples (label=1)")
-            print("=" * 60)
+            print("\nLoading POSITIVE examples (label=1)")
 
             file_source_pairs = self.parse_file_source_pairs(
                 positive_files, default_positive_source
@@ -138,30 +80,25 @@ class DatasetCreator:
                 df = self.load_file(file_path)
                 df[label_column] = 1
                 
-                # Check if source is a column reference (starts with @)
                 if source.startswith("@"):
-                    column_name = source[1:]  # Remove @ prefix
+                    column_name = source[1:]
                     if column_name not in df.columns:
                         raise ValueError(f"Column '{column_name}' not found in {file_path}")
                     df[source_column] = df[column_name]
-                    print(f"  → Source: from column '{column_name}'")
-                    # Show unique values in the source column
+                    print(f"  Source: from column '{column_name}'")
                     unique_sources = df[source_column].value_counts()
                     for src, count in unique_sources.items():
-                        print(f"     - {src}: {count}")
+                        print(f"    - {src}: {count}")
                 else:
                     df[source_column] = source
-                    print(f"  → Source: {source}")
+                    print(f"  Source: {source}")
                 
                 all_data.append(df)
 
             print(f"Total positive examples: {sum(len(df) for df in all_data)}")
 
-        # Load negative examples
         if negative_files:
-            print("\n" + "=" * 60)
-            print("Loading NEGATIVE examples (label=0)")
-            print("=" * 60)
+            print("\nLoading NEGATIVE examples (label=0)")
 
             neg_start_idx = len(all_data)
             file_source_pairs = self.parse_file_source_pairs(
@@ -172,20 +109,18 @@ class DatasetCreator:
                 df = self.load_file(file_path)
                 df[label_column] = 0
                 
-                # Check if source is a column reference (starts with @)
                 if source.startswith("@"):
-                    column_name = source[1:]  # Remove @ prefix
+                    column_name = source[1:]
                     if column_name not in df.columns:
                         raise ValueError(f"Column '{column_name}' not found in {file_path}")
                     df[source_column] = df[column_name]
-                    print(f"  → Source: from column '{column_name}'")
-                    # Show unique values in the source column
+                    print(f"  Source: from column '{column_name}'")
                     unique_sources = df[source_column].value_counts()
                     for src, count in unique_sources.items():
-                        print(f"     - {src}: {count}")
+                        print(f"    - {src}: {count}")
                 else:
                     df[source_column] = source
-                    print(f"  → Source: {source}")
+                    print(f"  Source: {source}")
                 
                 all_data.append(df)
 
@@ -197,19 +132,15 @@ class DatasetCreator:
                 "No data loaded! Provide at least one positive or negative file."
             )
 
-        # Combine all data
-        print("\n" + "=" * 60)
-        print("Combining datasets...")
+        print("\nCombining datasets...")
         combined_df = pd.concat(all_data, ignore_index=True)
 
-        # Shuffle the dataset
         combined_df = combined_df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-        print(f"✓ Created dataset with {len(combined_df)} total examples")
+        print(f"Created dataset with {len(combined_df)} total examples")
         print(f"  Positive: {(combined_df[label_column] == 1).sum()}")
         print(f"  Negative: {(combined_df[label_column] == 0).sum()}")
 
-        # Show source distribution
         print("\n  Source distribution:")
         for source, count in combined_df[source_column].value_counts().items():
             print(f"    {source}: {count}")

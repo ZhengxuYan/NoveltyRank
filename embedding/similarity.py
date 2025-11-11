@@ -1,27 +1,3 @@
-"""
-Compute similarity between paper embeddings using FAISS.
-
-Logic:
-1. Load dataset from HuggingFace (with embeddings and existing train/test splits)
-2. Build a FAISS index over ALL proximity embeddings (for comprehensive search)
-3. For each paper in train/test, query nearest neighbors and filter to papers
-   from the past 1 year
-4. Store top 10 similar papers (with embeddings and scores)
-5. Re-split dataset: papers before March 1, 2025 → train, papers from March 1, 2025 → test
-6. Push to new HuggingFace dataset
-
-Final splits:
-- Train: Papers published before March 1, 2025 (includes 2023, 2024, Jan-Feb 2025)
-- Test: Papers published from March 1, 2025 onwards
-
-Output columns:
-- 'classification_embedding': Feature embeddings for classification
-- 'proximity_embedding': Proximity embeddings for similarity
-- 'top_10_similar': List of dicts containing embeddings and similarity scores
-- 'max_similarity': Maximum similarity score
-- 'avg_similarity': Average similarity score
-"""
-
 import numpy as np
 import pandas as pd
 from datasets import load_dataset, Dataset, DatasetDict
@@ -31,18 +7,6 @@ import faiss
 
 
 def compute_similarities_for_papers(df, all_papers_df, search_k=200):
-    """
-    Compute similarities for papers using FAISS index built from all papers.
-
-    Args:
-        df: DataFrame with papers to compute similarities for
-        all_papers_df: DataFrame with ALL papers (used to build comprehensive FAISS index)
-        search_k: Number of nearest neighbors to query from FAISS
-                  before filtering by time window
-
-    Returns:
-        DataFrame with similarity columns added
-    """
     print("\n" + "=" * 80)
     print("Computing Similarities with FAISS")
     print("=" * 80)
@@ -160,19 +124,6 @@ def compute_similarities_for_papers(df, all_papers_df, search_k=200):
 
 
 def create_splits(df, split_date="2025-03-01"):
-    """
-    Create train/test splits based on publication date cutoff.
-
-    Train: Papers published before split_date
-    Test: Papers published from split_date onwards
-
-    Args:
-        df: DataFrame with papers
-        split_date: Date cutoff (default: "2025-03-01")
-
-    Returns:
-        tuple: (train_df, test_df)
-    """
     print("\n" + "=" * 80)
     print("Creating Train/Test Splits")
     print("=" * 80)

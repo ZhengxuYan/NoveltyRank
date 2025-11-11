@@ -1,9 +1,3 @@
-"""
-Filter arXiv papers by publication date
-
-This script removes papers published after a specified date.
-"""
-
 import pandas as pd
 from datetime import datetime
 import argparse
@@ -12,15 +6,6 @@ import argparse
 def filter_papers_by_date(
     input_csv, output_csv, cutoff_date, date_column="Publication Date"
 ):
-    """
-    Filter papers to only include those published before or on the cutoff date
-
-    Args:
-        input_csv: Path to input CSV file
-        output_csv: Path to output CSV file
-        cutoff_date: Cutoff date (YYYY-MM-DD)
-        date_column: Name of the date column
-    """
     print(f"Loading papers from {input_csv}...")
     df = pd.read_csv(input_csv)
 
@@ -53,11 +38,9 @@ def filter_papers_by_date(
     for year, count in year_dist.items():
         print(f"  {int(year)}: {count}")
 
-    # Save filtered data
     print(f"\nSaving to {output_csv}...")
     df_filtered.to_csv(output_csv, index=False)
-
-    print(f"✓ Done! Filtered dataset saved to {output_csv}")
+    print(f"Done! Filtered dataset saved to {output_csv}")
 
 
 def main():

@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""
-Push pickle to HF without scipy dependency
-
-This script avoids the scipy import issue by:
-1. Loading the pickle in a subprocess with numpy 2.x
-2. Saving as parquet (no numpy version dependency)
-3. Loading parquet and pushing to HuggingFace
-
-Usage:
-    python push_pickle_no_scipy.py --pickle-file path/to/file.pkl --repo username/dataset
-"""
-
 import argparse
 import os
 import sys

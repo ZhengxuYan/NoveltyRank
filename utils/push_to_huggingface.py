@@ -1,20 +1,13 @@
-"""
-Script to push SciBERT Multimodal model to Hugging Face Hub.
-"""
-
 import os
 from pathlib import Path
 from huggingface_hub import HfApi, create_repo, upload_folder
 from getpass import getpass
 
-# Configuration
 MODEL_DIR = Path("/Users/jasonyan/Desktop/CS 230/NoveltyRank/models/scibert_multimodal")
 REPO_ID = "JasonYan777/scibert-multimodal-novelty"  # Change this to your username/repo
 
 
 def push_model_to_hf():
-    """Push the model to Hugging Face Hub."""
-
     print("=" * 80)
     print("PUSH SCIBERT MULTIMODAL MODEL TO HUGGING FACE")
     print("=" * 80)

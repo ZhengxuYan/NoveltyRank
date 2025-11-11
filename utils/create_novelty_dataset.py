@@ -1,28 +1,8 @@
-#!/usr/bin/env python3
-"""
-Convenience script to create the novelty ranking dataset
-
-This script creates a labeled dataset where:
-- Positive examples (label=1): Papers accepted at top conferences
-  (NeurIPS, ICML, ICLR, AAAI, CVPR, ICCV, ACL, EMNLP)
-- Negative examples (label=0): Random papers from arXiv
-
-The source for positive examples comes from the "Matched Conferences" column
-The source for negative examples is set to "ArXiv"
-
-Usage:
-    python create_novelty_dataset.py [--repo REPO_NAME]
-
-Example:
-    python create_novelty_dataset.py --repo username/novelty-ranking-dataset
-"""
-
 import argparse
 import os
 import sys
 from pathlib import Path
 
-# Add parent directory to path to import create_hf_dataset
 sys.path.insert(0, str(Path(__file__).parent))
 
 from create_hf_dataset import DatasetCreator

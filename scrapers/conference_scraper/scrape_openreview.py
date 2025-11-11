@@ -1,10 +1,3 @@
-"""
-OpenReview Conference Paper Scraper
-
-A general scraper for conferences hosted on OpenReview (ICLR, NeurIPS, etc.)
-Supports both API v1 (2017-2023) and v2 (2024+).
-"""
-
 import requests
 import pandas as pd
 import time
@@ -13,8 +6,6 @@ from datetime import datetime
 
 
 class OpenReviewScraper:
-    """General scraper for OpenReview conference papers"""
-
     def __init__(
         self,
         conference="ICLR",
@@ -23,16 +14,6 @@ class OpenReviewScraper:
         fetch_decisions=False,
         fetch_scores=False,
     ):
-        """
-        Initialize the OpenReview scraper
-
-        Args:
-            conference (str): Conference name (e.g., "ICLR", "NeurIPS")
-            start_year (int): First year to scrape
-            end_year (int): Last year to scrape
-            fetch_decisions (bool): Whether to fetch decisions (SLOW - takes hours!)
-            fetch_scores (bool): Whether to fetch review scores (SLOW - takes hours!)
-        """
         self.conference = conference
         self.start_year = start_year
         self.end_year = end_year
@@ -40,11 +21,9 @@ class OpenReviewScraper:
         self.fetch_scores = fetch_scores
         self.papers = []
 
-        # OpenReview API endpoints
         self.api_v1 = "https://api.openreview.net/notes"
         self.api_v2 = "https://api2.openreview.net/notes"
 
-        # Query types for different submission statuses
         self.query_types = [
             "submission",
             "Submission",
@@ -52,20 +31,17 @@ class OpenReviewScraper:
             "Withdrawn_Submission",
             "Rejected_Submission",
             "Desk_Rejected_Submission",
-            "",  # For 2024+ to get all papers
+            "",
         ]
 
-        # Rate limiting
-        self.request_delay = 1  # seconds between requests
-        self.rate_limit_delay = 30  # seconds to wait when rate limited
+        self.request_delay = 1
+        self.rate_limit_delay = 30
 
     def make_request(self, url):
-        """Make API request with rate limiting handling"""
         try:
             response = requests.get(url)
             data = response.json()
 
-            # Check for rate limiting
             if "name" in data and data["name"] == "RateLimitError":
                 print(f"\nRate limited! Waiting {self.rate_limit_delay} seconds...")
                 time.sleep(self.rate_limit_delay)
@@ -80,7 +56,6 @@ class OpenReviewScraper:
             return None
 
     def build_url(self, year, query_type, offset=0):
-        """Build API URL based on year and query type"""
         conf = self.conference
 
         if year <= 2017:
@@ -93,31 +68,26 @@ class OpenReviewScraper:
                 return None
             return f"{self.api_v1}?invitation={conf}.cc%2F{year}%2FConference%2F-%2F{query_type}&offset={offset}"
 
-        else:  # 2024+
+        else:
             query_suffix = f"/{query_type}" if query_type != "" else ""
             return f"{self.api_v2}?content.venueid={conf}.cc/{year}/Conference{query_suffix}&offset={offset}"
 
     def extract_paper_data(self, note, year, query_type):
-        """Extract relevant data from a note (paper) object"""
         try:
             content = note.get("content", {})
 
-            # Handle different API versions (v1 vs v2)
             if year < 2024:
                 title = content.get("title", "").strip()
                 abstract = content.get("abstract", "").strip()
                 keywords = content.get("keywords", [])
                 authors_list = content.get("authors", [])
 
-                # Handle author names
                 if isinstance(authors_list, list):
                     authors = ", ".join(authors_list)
                 else:
                     authors = authors_list if authors_list else ""
 
-                # Handle author IDs (email-based for older years)
                 if year == 2017:
-                    # 2017 uses different field names
                     if "authorids" in content:
                         author_ids = ", ".join(content["authorids"])
                     elif "author_emails" in content:
@@ -127,7 +97,7 @@ class OpenReviewScraper:
                 else:
                     author_ids = ", ".join(content.get("authorids", []))
 
-            else:  # 2024+
+            else:
                 title = content.get("title", {}).get("value", "").strip()
                 abstract = content.get("abstract", {}).get("value", "").strip()
                 keywords = content.get("keywords", {}).get("value", [])
@@ -141,11 +111,9 @@ class OpenReviewScraper:
                     authors = ""
                     author_ids = ""
 
-            # Remove author IDs for years <= 2020 (email-based IDs are not useful)
             if year <= 2020:
                 author_ids = ""
 
-            # Determine initial decision status based on query type
             if "Withdrawn_Submission" in query_type:
                 decision = "Withdrawn"
             elif "Desk_Rejected_Submission" in query_type:
@@ -177,18 +145,10 @@ class OpenReviewScraper:
             return None
 
     def fetch_decisions_and_scores_for_papers(self):
-        """
-        Fetch decisions and scores by querying each paper's forum individually.
-        WARNING: This is VERY SLOW - takes several hours for thousands of papers!
-        Based on the notebook approach in cell 6.
-        """
-        print("\n" + "=" * 80)
-        print(f"FETCHING DECISIONS AND SCORES (This will take several hours!)")
+        print(f"Fetching decisions and scores (this will take several hours)")
         print(f"Total papers to process: {len(self.papers)}")
-        print("=" * 80)
 
         for num, paper in enumerate(self.papers):
-            # Progress indicator
             if (num + 1) % 1000 == 0:
                 print("*", end="", flush=True)
             elif (num + 1) % 100 == 0:
@@ -197,30 +157,25 @@ class OpenReviewScraper:
             year = paper["year"]
             forum_id = paper["id"]
 
-            # Skip if decision already set (from query type)
             if not self.fetch_decisions and paper["decision"] != "":
                 continue
 
-            # Build forum URL based on API version
             if year < 2024:
                 forum_url = f"{self.api_v1}?forum={forum_id}"
             else:
                 forum_url = f"{self.api_v2}?forum={forum_id}"
 
-            # Make request
             data = self.make_request(forum_url)
             if data is None:
                 continue
 
             notes = data.get("notes", [])
 
-            # Fetch decision if requested
             if self.fetch_decisions and paper["decision"] == "":
                 found_decision = False
                 for note in notes:
                     content = note.get("content", {})
 
-                    # Check for decision field
                     if "decision" in content:
                         decision = content["decision"]
                         if year >= 2024 and isinstance(decision, dict):
@@ -229,19 +184,16 @@ class OpenReviewScraper:
                         found_decision = True
                         break
 
-                    # Check for withdrawal confirmation (2024+)
                     if "withdrawal_confirmation" in content:
                         paper["decision"] = "Withdrawn"
                         found_decision = True
                         break
 
-                    # Check for desk rejection
                     if "desk_reject_comments" in content:
                         paper["decision"] = "Desk rejected"
                         found_decision = True
                         break
 
-                    # Check for recommendation field (used in some years)
                     if "recommendation" in content:
                         decision = content["recommendation"]
                         if isinstance(decision, dict):
@@ -250,26 +202,22 @@ class OpenReviewScraper:
                         found_decision = True
                         break
 
-                    # Check for withdrawal field (ICLR 2017)
                     if "withdrawal" in content:
                         if content["withdrawal"] == "Confirmed":
                             paper["decision"] = "Withdrawn"
                             found_decision = True
                             break
 
-            # Fetch scores if requested
             if self.fetch_scores:
                 scores = []
                 for note in notes:
                     content = note.get("content", {})
 
-                    # Check for rating field
                     if "rating" in content:
                         rating = content["rating"]
                         if year >= 2024 and isinstance(rating, dict):
                             rating = rating.get("value", "")
 
-                        # Extract numeric score
                         if isinstance(rating, str):
                             try:
                                 score = int(rating.split(":")[0])
@@ -281,11 +229,10 @@ class OpenReviewScraper:
 
                 paper["scores"] = scores
 
-        print("\n")
+        print()
         return self.papers
 
     def scrape_year(self, year):
-        """Scrape all papers for a given year"""
         print(f"\nScraping {self.conference} {year}:")
         year_papers = []
 
@@ -315,7 +262,6 @@ class OpenReviewScraper:
                     if paper:
                         year_papers.append(paper)
 
-                # Check if we need to continue pagination
                 if len(notes) < 1000:
                     break
 
@@ -325,11 +271,9 @@ class OpenReviewScraper:
         return year_papers
 
     def scrape_all(self):
-        """Scrape all papers from start_year to end_year"""
         print(
             f"Scraping {self.conference} papers from {self.start_year} to {self.end_year}"
         )
-        print("=" * 60)
 
         all_papers = []
 
@@ -338,17 +282,14 @@ class OpenReviewScraper:
             all_papers.extend(year_papers)
 
         self.papers = all_papers
-        print("\n" + "=" * 60)
         print(f"Total papers scraped: {len(all_papers)}")
 
-        # Fetch decisions and scores if requested
         if self.fetch_decisions or self.fetch_scores:
             self.fetch_decisions_and_scores_for_papers()
 
         return all_papers
 
     def filter_papers(self, min_abstract_length=100):
-        """Filter out papers with very short abstracts (likely placeholders)"""
         print(
             f"\nFiltering papers with abstract length < {min_abstract_length} characters..."
         )
@@ -368,17 +309,14 @@ class OpenReviewScraper:
         return filtered_papers
 
     def to_dataframe(self):
-        """Convert papers to pandas DataFrame"""
         if not self.papers:
             print("No papers to convert!")
             return None
 
         df = pd.DataFrame(self.papers)
 
-        # Sort by year and id
         df = df.sort_values(by=["year", "id"]).reset_index(drop=True)
 
-        # Reorder columns
         columns = [
             "year",
             "id",
@@ -396,12 +334,10 @@ class OpenReviewScraper:
         return df
 
     def save_to_csv(self, output_file="papers.csv"):
-        """Save scraped papers to CSV file"""
         df = self.to_dataframe()
         if df is None:
             return None
 
-        # Convert lists to strings for CSV
         df_csv = df.copy()
         df_csv["scores"] = df_csv["scores"].apply(
             lambda x: ", ".join(map(str, x))
@@ -412,8 +348,6 @@ class OpenReviewScraper:
             lambda x: ", ".join(x) if isinstance(x, list) else x
         )
 
-        # Replace newlines in text fields to prevent CSV multiline issues
-        # This prevents papers from spanning multiple rows in the CSV
         text_columns = ["title", "abstract", "authors", "author_ids", "keywords"]
         for col in text_columns:
             if col in df_csv.columns:
@@ -423,7 +357,6 @@ class OpenReviewScraper:
                     else x
                 )
 
-        # Save with proper escaping and quoting
         df_csv.to_csv(
             output_file, index=False, encoding="utf-8", escapechar="\\", quoting=1
         )
@@ -432,12 +365,10 @@ class OpenReviewScraper:
         return df
 
     def save_to_parquet(self, output_file="papers.parquet"):
-        """Save scraped papers to Parquet file"""
         df = self.to_dataframe()
         if df is None:
             return None
 
-        # Save to parquet (preserves list types)
         df.to_parquet(output_file)
         print(f"\nSaved {len(df)} papers to {output_file}")
 
@@ -445,16 +376,6 @@ class OpenReviewScraper:
 
 
 def main():
-    """
-    Main function to run the scraper
-
-    Example usage:
-        # Quick scrape without decisions (fast - 10 minutes)
-        python scrape_iclr.py --conference ICLR --start-year 2024 --end-year 2024
-
-        # Full scrape with decisions and scores (slow - several hours!)
-        python scrape_iclr.py --conference ICLR --start-year 2024 --end-year 2025 --fetch-decisions --fetch-scores
-    """
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -471,12 +392,12 @@ def main():
     parser.add_argument(
         "--fetch-decisions",
         action="store_true",
-        help="Fetch accept/reject decisions (SLOW - takes hours!)",
+        help="Fetch accept/reject decisions (slow)",
     )
     parser.add_argument(
         "--fetch-scores",
         action="store_true",
-        help="Fetch review scores (SLOW - takes hours!)",
+        help="Fetch review scores (slow)",
     )
     parser.add_argument(
         "--format",
@@ -494,10 +415,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Create output directory if it doesn't exist
     os.makedirs("results", exist_ok=True)
 
-    # Initialize scraper
     print(
         f"Initializing scraper for {args.conference} ({args.start_year}-{args.end_year})"
     )
@@ -512,13 +431,10 @@ def main():
         fetch_scores=args.fetch_scores,
     )
 
-    # Scrape all papers
     scraper.scrape_all()
 
-    # Filter out placeholder abstracts
     scraper.filter_papers(min_abstract_length=100)
 
-    # Generate output filename
     if args.output is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         conf_lower = args.conference.lower()
@@ -527,17 +443,13 @@ def main():
     else:
         output_file = args.output
 
-    # Save to file
     if args.format == "csv":
         df = scraper.save_to_csv(output_file)
     else:
         df = scraper.save_to_parquet(output_file)
 
-    # Print summary statistics
     if df is not None:
-        print("\n" + "=" * 60)
-        print("Summary Statistics:")
-        print("=" * 60)
+        print("\nSummary Statistics:")
         print(df.groupby("year")["id"].count().rename("papers_per_year"))
 
         if args.fetch_decisions:
@@ -559,8 +471,6 @@ def main():
         print(f"The conference '{args.conference}' may not be hosted on OpenReview.")
         print("Conferences known to work: ICLR, NeurIPS, ICML, CoRL, TMLR")
         print("Conferences NOT on OpenReview: CVPR, ECCV, ICCV, ACL, EMNLP")
-        print("=" * 60)
-        print("\n")
 
 
 if __name__ == "__main__":

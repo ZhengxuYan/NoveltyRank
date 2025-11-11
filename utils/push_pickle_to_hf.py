@@ -1,14 +1,3 @@
-#!/usr/bin/env python3
-"""
-Push pickle datasets to Hugging Face Hub
-
-This script loads train and test pickle files (pandas DataFrames), converts them
-to a Hugging Face DatasetDict with train/test splits, and pushes to the Hub.
-
-Usage:
-    python push_pickle_to_hf.py --train-file path/to/train.pkl --test-file path/to/test.pkl --repo username/dataset-name
-"""
-
 import argparse
 import os
 import sys

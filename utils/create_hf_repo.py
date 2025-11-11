@@ -1,8 +1,3 @@
-"""
-Simple script to create a Hugging Face repository.
-Run this first to verify your token and create the repo.
-"""
-
 import os
 from getpass import getpass
 from huggingface_hub import HfApi, create_repo
