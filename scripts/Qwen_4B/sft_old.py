@@ -1,10 +1,8 @@
 import os
-import sys
 import asyncio
 import json
 import chz
 import wandb
-import numpy as np
 import tinker
 import re
 

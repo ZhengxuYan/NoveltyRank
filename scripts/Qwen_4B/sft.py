@@ -15,8 +15,9 @@ from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 import os, sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from scripts.sft_env import NoveltyRankSFTDataBuilder, AccuracyOnLabeledTestSetEvaluator
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
+from models.Qwen_4B.sft_env import NoveltyRankSFTDataBuilder, AccuracyOnLabeledTestSetEvaluator
     
 def build_config(
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
