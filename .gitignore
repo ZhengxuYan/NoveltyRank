@@ -10,6 +10,8 @@ dataset/
 # CSV Files
 *.csv
 
+# results Files
+results/
 # Parquet Files (uncomment if you want to ignore these too)
 *.parquet
 
