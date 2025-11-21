@@ -4,11 +4,10 @@ from datasets import load_dataset, Dataset, DatasetDict
 from tqdm import tqdm
 import argparse
 import faiss
+import os
 
-
-def compute_similarities_for_papers(df, all_papers_df, search_k=200):
+def compute_similarities_for_papers(df, all_papers_df, embedding="proximity", search_k=200):
     print("\n" + "=" * 80)
-    print("Computing Similarities with FAISS")
     print("=" * 80)
 
     # Convert Publication Date to datetime for both dataframes
@@ -24,7 +23,7 @@ def compute_similarities_for_papers(df, all_papers_df, search_k=200):
     emb_all = np.vstack(
         [
             np.asarray(e, dtype=np.float32)
-            for e in all_papers_df["proximity_embedding"].values
+            for e in all_papers_df[embedding].values
         ]
     ).astype("float32")
 
@@ -44,17 +43,20 @@ def compute_similarities_for_papers(df, all_papers_df, search_k=200):
     index_pub_dates = all_papers_df["Publication Date"].to_numpy()
     index_arxiv_ids = all_papers_df["arXiv ID"].to_numpy()
 
+    # Extract embedding name prefix (remove "_embedding" suffix if present)
+    emb_prefix = embedding.replace("_embedding", "")
+
     # Initialize new columns for the subset we're processing
-    df["top_10_similar"] = None
-    df["max_similarity"] = None
-    df["avg_similarity"] = None
+    df[f"{emb_prefix}_top_10_sim"] = None
+    df[f"{emb_prefix}_max_sim"] = None
+    df[f"{emb_prefix}_avg_sim"] = None
 
     print(f"\nProcessing {len(df)} papers to compute similarities")
     print()
 
     # Build query embeddings for the papers we're processing
     query_embs = np.vstack(
-        [np.asarray(e, dtype=np.float32) for e in df["proximity_embedding"].values]
+        [np.asarray(e, dtype=np.float32) for e in df[embedding].values]
     ).astype("float32")
     faiss.normalize_L2(query_embs)
 
@@ -64,9 +66,9 @@ def compute_similarities_for_papers(df, all_papers_df, search_k=200):
         current_arxiv_id = df.iloc[idx]["arXiv ID"]
 
         if pd.isna(pub_date):
-            df.at[df.index[idx], "top_10_similar"] = []
-            df.at[df.index[idx], "max_similarity"] = None
-            df.at[df.index[idx], "avg_similarity"] = None
+            df.at[df.index[idx], f"{emb_prefix}_top_10_sim"] = []
+            df.at[df.index[idx], f"{emb_prefix}_max_sim"] = None
+            df.at[df.index[idx], f"{emb_prefix}_avg_sim"] = None
             continue
 
         # Define comparison window: 1 year before publication date
@@ -94,9 +96,9 @@ def compute_similarities_for_papers(df, all_papers_df, search_k=200):
 
         if len(candidates) == 0:
             # No papers to compare with
-            df.at[df.index[idx], "top_10_similar"] = []
-            df.at[df.index[idx], "max_similarity"] = None
-            df.at[df.index[idx], "avg_similarity"] = None
+            df.at[df.index[idx], f"{emb_prefix}_top_10_sim"] = []
+            df.at[df.index[idx], f"{emb_prefix}_max_sim"] = None
+            df.at[df.index[idx], f"{emb_prefix}_avg_sim"] = None
             continue
 
         # Build list of dicts with embeddings and scores
@@ -106,24 +108,24 @@ def compute_similarities_for_papers(df, all_papers_df, search_k=200):
                 {
                     "arxiv_id": index_arxiv_ids[j],
                     "similarity_score": sim,
-                    "embedding": all_papers_df.iloc[j]["proximity_embedding"],
+                    "embedding": all_papers_df.iloc[j][embedding],
                     "publication_date": str(pd.to_datetime(index_pub_dates[j]).date()),
                 }
             )
 
         # Store results
-        df.at[df.index[idx], "top_10_similar"] = top_k_similar
-        df.at[df.index[idx], "max_similarity"] = float(
+        df.at[df.index[idx], f"{emb_prefix}_top_10_sim"] = top_k_similar
+        df.at[df.index[idx], f"{emb_prefix}_max_sim"] = float(
             top_k_similar[0]["similarity_score"]
         )
-        df.at[df.index[idx], "avg_similarity"] = float(
+        df.at[df.index[idx], f"{emb_prefix}_avg_sim"] = float(
             np.mean([x["similarity_score"] for x in top_k_similar])
         )
 
     return df
 
 
-def create_splits(df, split_date="2025-03-01"):
+def create_splits(df, split_date="2025-03-15"):
     print("\n" + "=" * 80)
     print("Creating Train/Test Splits")
     print("=" * 80)
@@ -214,7 +216,7 @@ def main():
         print("\nError: Dataset must have 'train' and 'test' splits!")
         print("Please run create_novelty_dataset.py first to create the splits.")
         return
-
+    
     train_df = pd.DataFrame(ds["train"])
     test_df = pd.DataFrame(ds["test"])
 
@@ -227,6 +229,7 @@ def main():
     required_cols = [
         "proximity_embedding",
         "classification_embedding",
+        "scibert_embedding",
         "Publication Date",
     ]
     missing_cols = [col for col in required_cols if col not in train_df.columns]
@@ -243,37 +246,39 @@ def main():
         f"Date range: {pd.to_datetime(all_papers_df['Publication Date']).min()} to {pd.to_datetime(all_papers_df['Publication Date']).max()}"
     )
 
-    # Compute similarities for train set
-    print("\n" + "=" * 80)
-    print("Processing TRAIN set")
-    print("=" * 80)
-    train_df = compute_similarities_for_papers(
-        train_df,
-        all_papers_df,
-        search_k=args.search_k,
-    )
+    # Define embeddings to process
+    embeddings = ["proximity_embedding", "classification_embedding", "scibert_embedding"]
 
-    # Compute similarities for test set
-    print("\n" + "=" * 80)
-    print("Processing TEST set")
-    print("=" * 80)
-    test_df = compute_similarities_for_papers(
-        test_df,
-        all_papers_df,
-        search_k=args.search_k,
-    )
+    # Compute similarities for each embedding type
+    for embedding in embeddings:
+        print("\n" + "=" * 80)
+        print(f"Processing TRAIN set for {embedding}")
+        print("=" * 80)
+        train_df = compute_similarities_for_papers(
+            train_df,
+            all_papers_df,
+            embedding=embedding,
+            search_k=args.search_k,
+        )
 
-    # Combine back together for re-splitting
-    combined_df = pd.concat([train_df, test_df], ignore_index=True)
-    print(f"\nCombined {len(combined_df)} papers with similarity features")
+        print("\n" + "=" * 80)
+        print(f"Processing TEST set for {embedding}")
+        print("=" * 80)
+        test_df = compute_similarities_for_papers(
+            test_df,
+            all_papers_df,
+            embedding=embedding,
+            search_k=args.search_k,
+        )
 
-    # Re-split based on March 1, 2025 cutoff
-    train_df, test_df = create_splits(combined_df, split_date=args.split_date)
+    all_papers_df = pd.concat([train_df, test_df], ignore_index=True)
+    print(f"\nCombined {len(all_papers_df)} papers with similarity features")
+
+    # Re-split based on March 15, 2025 cutoff
+    train_df, test_df = create_splits(all_papers_df, split_date=args.split_date)
 
     # Save locally if requested
     if args.save_local:
-        import os
-
         os.makedirs("results", exist_ok=True)
 
         print("\n" + "=" * 80)
@@ -318,6 +323,30 @@ def main():
     print("\nNote: Each paper compares with similar papers from the past 1 year")
     print("=" * 80)
 
+    # Print similarity statistics for each embedding
+    print("\n" + "=" * 80)
+    print("Similarity Statistics by Embedding Type")
+    print("=" * 80)
+    for embedding in embeddings:
+        emb_prefix = embedding.replace("_embedding", "")
+        max_col = f"{emb_prefix}_max_sim"
+        avg_col = f"{emb_prefix}_avg_sim"
+        
+        # Filter out None values for statistics
+        max_vals = all_papers_df[max_col].dropna()
+        avg_vals = all_papers_df[avg_col].dropna()
+        
+        print(f"\n{embedding}:")
+        if len(max_vals) > 0:
+            print(f"  {max_col}: min={max_vals.min():.4f}, max={max_vals.max():.4f}, mean={max_vals.mean():.4f}")
+        else:
+            print(f"  {max_col}: No valid values")
+            
+        if len(avg_vals) > 0:
+            print(f"  {avg_col}: min={avg_vals.min():.4f}, max={avg_vals.max():.4f}, mean={avg_vals.mean():.4f}")
+        else:
+            print(f"  {avg_col}: No valid values")
+    print("=" * 80)
 
 if __name__ == "__main__":
     main()
