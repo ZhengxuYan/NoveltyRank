@@ -35,12 +35,12 @@ class NoveltyDPOConfig:
     
     # Checkpointing
     load_checkpoint_path: Optional[str] = None
-    log_path: str = "results/noveltyrank_dpo_qwen4b"
+    log_path: str = "results/noveltyrank_dpo_qwen4b_new"
     
     # Training Hyperparameters
     learning_rate: float = 5e-6
-    batch_size: int = 16
-    num_epochs: int = 10
+    batch_size: int = 128
+    num_epochs: int = 20
     dpo_beta: float = 0.1
     lora_rank: int = 32
     
@@ -51,7 +51,7 @@ class NoveltyDPOConfig:
     # Infrastructure
     base_url: Optional[str] = None  # For local/remote service URL
     wandb_project: str = "NoveltyRank"
-    wandb_name: str = "DPO_qwen_4b"
+    wandb_name: str = "DPO_qwen_4b_new"
 
 
 # -----------------------------------------------------------------------------
@@ -60,7 +60,8 @@ class NoveltyDPOConfig:
 
 def main(env_config: NoveltyDPOConfig):
     
-    dataset_path = "JasonYan777/novelty-dataset"
+    # dataset_path = "JasonYan777/novelty-dataset"
+    dataset_path = "JasonYan777/novelty-rank-with-similarities"
 
     logger.info(f"Starting DPO training for model: {env_config.model_name}")
 
@@ -113,8 +114,8 @@ def main(env_config: NoveltyDPOConfig):
         load_checkpoint_path=env_config.load_checkpoint_path,
         
         # Frequency settings
-        save_every=50,
-        eval_every=50
+        save_every=10,
+        eval_every=10
     )
 
     # 6. Run Training

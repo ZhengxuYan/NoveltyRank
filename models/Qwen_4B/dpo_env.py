@@ -148,7 +148,7 @@ class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
 
 @chz.chz
 class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
-    dataset_path: str = "JasonYan777/novelty-dataset"
+    dataset_path: str 
     renderer_name: str
     model_name: str
     max_tokens: int = 10
@@ -176,7 +176,7 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
 @chz.chz
 class NoveltyRankDatasetLoader(ChatDatasetBuilder):
     common_config: ChatDatasetBuilderCommonConfig
-    dataset_path: str = "JasonYan777/novelty-dataset"
+    dataset_path: str
 
     def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
         logger.info(f"Loading HF dataset: {self.dataset_path}")

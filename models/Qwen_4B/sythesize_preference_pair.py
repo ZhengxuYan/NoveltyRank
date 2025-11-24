@@ -2,18 +2,43 @@ import logging
 import random
 from typing import Dict, List, Any
 from datasets import Dataset
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 def clean_dataset(dataset: Dataset) -> Dataset:
     """
-    Clean the dataset by removing null similarities and rescaling scores.
+    Clean the dataset by removing null similarities, filtering for 2024 dates, and rescaling scores.
     """
-    # Filter out invalid entries
-    dataset = dataset.filter(
-        lambda example: example.get("max_similarity") not in [None, "null"]
-        and example.get("avg_similarity") not in [None, "null"]
-    )
+    
+    def is_valid_and_2024(example: Dict[str, Any]) -> bool:
+        """Checks if similarity scores are valid and if the 'Updated Date' year is 2024."""
+        
+        # 1. Check for similarity field validity
+        similarity_valid = (
+            example.get("max_similarity") not in [None, "null"]
+            and example.get("avg_similarity") not in [None, "null"]
+        )
+        
+        # 2. Check if the year of 'Updated Date' is 2024
+        updated_date_str = example.get("Updated Date")
+        year_is_2024 = False
+        
+        # Ensure 'Updated Date' is a non-empty string
+        if updated_date_str and isinstance(updated_date_str, str):
+            try:
+                # Attempt to parse the date string. Format is assumed to be 'YYYY-MM-DD'
+                date_object = datetime.strptime(updated_date_str, '%Y-%m-%d')
+                if date_object.year == 2024:
+                    year_is_2024 = True
+            except ValueError:
+                # If date format is incorrect, the year filter fails
+                pass
+        
+        return similarity_valid and year_is_2024
+
+    # Filter out invalid entries and non-2024 years
+    dataset = dataset.filter(is_valid_and_2024)
 
     # Rescale similarity scores from 0-1 to min-max
     max_similarity_values = [float(item["max_similarity"]) for item in dataset]
@@ -110,25 +135,40 @@ Output only the letter ('A' or 'B').
 
 def generate_dpo_pairs_from_hf(dataset: Dataset) -> Dataset:
     """
-    Converts a dataset containing individual labeled papers into pairwise DPO examples.
+    Converts a dataset containing individual labeled papers into pairwise DPO examples 
+    in a memory-efficient manner by avoiding conversion to a full Python list.
+
     Strategy: Pair every Positive sample (label=1) with a random Negative sample (label=0).
     """
-    # Convert to list for easier handling (memory permitting)
-    data_list = list(dataset)
     
-    pos_samples = [x for x in data_list if str(x.get('label')) == "1"]
-    neg_samples = [x for x in data_list if str(x.get('label')) == "0"]
+    # 1. Create filtered views (still Dataset objects). 
+    # This is memory efficient as it only stores references/indices, not full copies.
+    pos_samples = dataset.filter(lambda x: str(x.get('label')) == "1")
+    neg_samples = dataset.filter(lambda x: str(x.get('label')) == "0")
     
-    if not pos_samples or not neg_samples:
+    num_neg = len(neg_samples)
+    
+    if len(pos_samples) == 0 or num_neg == 0:
         logger.warning("Dataset missing either positive or negative samples. Cannot form pairs.")
         return Dataset.from_list([])
 
-    dpo_data = []
+    dpo_data: List[Dict[str, Any]] = []
     
-    for pos in pos_samples:
-        # Randomly select a negative sample to contrast against
-        neg = random.choice(neg_samples)
+    # 2. Iterate over the Positive samples (efficient iteration over the Dataset view).
+    for pos_idx, pos in enumerate(pos_samples):
+        # 3. Randomly select an INDEX from the Negative samples.
+        # This avoids loading all negative samples into memory simultaneously.
+        
+        # Select a random index
+        random_neg_index = random.randrange(num_neg)
+        
+        # Access the specific negative sample using the index. 
+        # This fetches only the required single row from the Dataset view.
+        neg = neg_samples[random_neg_index]
+        
+        # 4. Create the DPO example pair
         dpo_example = create_comparison_example(pos, neg)
         dpo_data.append(dpo_example)
     
+    # 5. Convert the resulting list of comparison examples back to a Dataset.
     return Dataset.from_list(dpo_data)
