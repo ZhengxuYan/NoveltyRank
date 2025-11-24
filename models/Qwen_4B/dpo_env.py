@@ -1,213 +1,125 @@
+import os
+import sys
 import logging
+import random
 import asyncio
-from dataclasses import dataclass
-from typing import Sequence
-
+from typing import Any, List, Tuple, Dict, Union, Optional
+from tinker_cookbook.supervised.common import datum_from_tokens_weights
+from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 import chz
-from datasets import Dataset, load_dataset, concatenate_datasets
+from datasets import load_dataset, Dataset as HFDataset
+
+# Add current path to sys.path to ensure tinker modules can be found
+sys.path.append(os.getcwd())
 
 import tinker
 from tinker_cookbook import renderers
-from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
-# Import required base classes for the RL trainer interface
-from tinker_cookbook.rl.types import (
-    RLDataset, 
-    RLDatasetBuilder, 
-    EnvGroupBuilder, 
-    Env,
-    Trajectory,
-    Metrics
-)
-from tinker_cookbook.rl.preference_envs import PreferenceEnv
 from tinker_cookbook.tokenizer_utils import get_tokenizer, Tokenizer
-
-# Import your data logic
-import os, sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
-from models.Qwen_4B.sythesize_preference_pair import clean_dataset, generate_dpo_pairs_from_hf
+from tinker_cookbook.supervised.types import (
+    ChatDatasetBuilder, 
+    SupervisedDataset, 
+    ChatDatasetBuilderCommonConfig
+)
+from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 
 logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
-# 1. Adapter Classes (The "Fake" Environment Logic)
+# Import Helpers from External Module (User Logic)
 # -----------------------------------------------------------------------------
+# Temporarily add the grandparent directory to path to find models module
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Assuming the structure involves going up two levels to find 'models'
+sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 
-@dataclass(frozen=True)
-class NoveltyRankGroupBuilder(EnvGroupBuilder):
-    """
-    Adapts static DPO data to look like an RL Environment Group.
-    This structure tells the RL trainer: "Here are two trajectories, one is Good, one is Bad."
-    """
-    prompt_conversation: list[renderers.Message]
-    chosen: list[renderers.Message]
-    rejected: list[renderers.Message]
-    policy_renderer: renderers.Renderer 
-    
-    async def make_envs(self) -> Sequence[Env]:
-        """
-        Creates TWO environments for each data point:
-        1. An env containing the CHOSEN response.
-        2. An env containing the REJECTED response.
-        
-        The RL trainer will iterate through these. In Offline mode, it takes the 
-        pre-filled messages as the 'trajectory'.
-        """
-        # Env 0: Holds the Chosen response
-        env_chosen = PreferenceEnv(self.prompt_conversation, self.policy_renderer)
-        # Hack: We pre-inject the response so the "rollout" just returns this static data
-        # Note: Depending on Tinker version, PreferenceEnv might need extra setup to accept static data,
-        # but typically passing the prompt is enough for the dataset wrapper.
-        
-        # Env 1: Holds the Rejected response
-        env_rejected = PreferenceEnv(self.prompt_conversation, self.policy_renderer)
-        
-        return [env_chosen, env_rejected]
-
-    async def compute_group_rewards(self, trajectory_group: list[Trajectory]) -> list[tuple[float, Metrics]]:
-        """
-        Calculates the reward for the group.
-        Since we established that:
-          - Index 0 corresponds to CHOSEN
-          - Index 1 corresponds to REJECTED
-          
-        We assign a positive reward to index 0 and negative to index 1.
-        This difference (1.0 - (-1.0) = 2.0) provides the gradient signal 
-        that "Chosen > Rejected".
-        """
-        # Sanity check: ensure we have exactly 2 trajectories (Chosen vs Rejected)
-        if len(trajectory_group) != 2:
-            logger.warning(f"Expected 2 trajectories (Chosen/Rejected), got {len(trajectory_group)}")
-            return [(0.0, {}) for _ in trajectory_group]
-
-        # Reward Scheme:
-        # Chosen (Index 0): Reward = 1.0
-        # Rejected (Index 1): Reward = -1.0
-        # The exact values matter less than the sign and difference.
-        
-        rewards_and_metrics = [
-            (1.0, {"score": 1.0}),   # Index 0
-            (-1.0, {"score": -1.0}) # Index 1
-        ]
-        
-        return rewards_and_metrics
-
+try:
+    from models.Qwen_4B.sythesize_preference_pair import (
+        clean_dataset,
+        generate_dpo_pairs_from_hf,
+    )
+except ImportError as e:
+    logger.error("Failed to import helper functions. Please check your path structure.")
+    raise e
 
 # -----------------------------------------------------------------------------
-# 2. Dataset Classes
+# Dataset Implementation
 # -----------------------------------------------------------------------------
 
-@chz.chz
-class HFNoveltyRankDatasetBuilder:
-    model_name_for_tokenizer: str
-    renderer_name: str
-
-    @property
-    def tokenizer(self) -> Tokenizer:
-        return get_tokenizer(self.model_name_for_tokenizer)
-
-    @property
-    def renderer(self) -> renderers.Renderer:
-        return renderers.get_renderer(self.renderer_name, self.tokenizer)
-
-
-class NoveltyRankDPODataset(RLDataset):
+class NoveltyDPODataset(SupervisedDataset):
     """
-    Wraps the dataset to return NoveltyRankGroupBuilder objects
-    instead of raw examples.
+    A dataset that flattens DPO pairs into an interleaved sequence:
+    [Chosen_0, Rejected_0, Chosen_1, Rejected_1, ...]
+    This is required by the tinker-cookbook DPO implementation.
     """
-    def __init__(
-        self, 
-        batch_size: int,
-        dataset_builder: HFNoveltyRankDatasetBuilder # Need renderer access
-    ):
+    def __init__(self, pairs: List[Dict], tokenizer: Tokenizer, renderer: renderers.Renderer, batch_size: int):
+        self.pairs = pairs
+        self.tokenizer = tokenizer
+        self.renderer = renderer
         self.batch_size = batch_size
-        self.train_dataset = None
-        self.dataset_builder = dataset_builder
-
-    def set_dataset(self, train_dataset: Dataset):
-        self.train_dataset = train_dataset
-
-    def get_batch(self, index: int) -> list[NoveltyRankGroupBuilder]:
-        """
-        Returns a batch of GroupBuilders, satisfying rl.train's expectations.
-        """
-        start = index * self.batch_size
-        end = (index + 1) * self.batch_size
-        rows = self.train_dataset.select(range(start, end))
         
-        batch_builders = []
-        for row in rows:
-            if row is None: continue
-            
-            # WRAP the static data into the Builder class
-            builder = NoveltyRankGroupBuilder(
-                prompt_conversation=row["prompt_conversation"],
-                chosen=row["chosen"],
-                rejected=row["rejected"],
-                policy_renderer=self.dataset_builder.renderer
-            )
-            batch_builders.append(builder)
-            
-        return batch_builders
+        # Calculate how many pairs fit in one batch
+        self.pairs_per_batch = self.batch_size // 2
+        
+        self.indices = list(range(len(self.pairs)))
 
     def __len__(self) -> int:
-        if self.train_dataset is None: return 0
-        return len(self.train_dataset) // self.batch_size
+        # Total items = 2 * number of pairs (Chosen + Rejected)
+        return len(self.pairs) * 2 // self.batch_size
 
+    def set_epoch(self, seed: int = 0):
+        # Shuffle the pairs indices to ensure randomness across epochs
+        rng = random.Random(seed)
+        rng.shuffle(self.indices)
 
-@chz.chz
-class NoveltyRankDPODatasetBuilder(RLDatasetBuilder):
-    """
-    Config builder.
-    """
-    comparison_dataset_builder: HFNoveltyRankDatasetBuilder # Add this field
-    batch_size: int
-
-    async def __call__(self) -> tuple[NoveltyRankDPODataset, None]:
-        # We pass the builder helper to the dataset so it can access the renderer
-        dpo_dataset = NoveltyRankDPODataset(
-            batch_size=self.batch_size,
-            dataset_builder=self.comparison_dataset_builder
-        )
-        return dpo_dataset, None
-
-
-@chz.chz
-class NoveltyRankDatasetLoader(HFNoveltyRankDatasetBuilder):
-    dataset_path: str = "JasonYan777/novelty-dataset"
-    multiple_num: int = 1 
-
-    def get_train_and_test_datasets(self) -> tuple[Dataset, Dataset | None]:
-        logger.info(f"Loading HF dataset: {self.dataset_path}")
-        dataset = load_dataset(self.dataset_path)
+    def _process_single_item(self, pair_data: Dict, is_rejected: bool) -> tinker.Datum:
+        """Helper to process one conversation into a Datum"""
+        prompt_msgs = pair_data["prompt_conversation"]
+        response_msgs = pair_data["rejected"] if is_rejected else pair_data["chosen"]
         
-        train_raw = clean_dataset(dataset["train"])
-        test_raw = clean_dataset(dataset["test"])
+        full_conversation = prompt_msgs + response_msgs
+        
+        tokens, weights = self.renderer.build_supervised_example(
+            full_conversation,
+            train_on_what=renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES
+        )
+        return datum_from_tokens_weights(tokens, weights)
 
-        logger.info("Converting to DPO pairs...")
-        train_dpo = generate_dpo_pairs_from_hf(train_raw)
-        test_dpo = generate_dpo_pairs_from_hf(test_raw)
 
-        if self.multiple_num > 1:
-            logger.info(f"Replicating train dataset {self.multiple_num} times...")
-            train_dpo = concatenate_datasets([train_dpo] * self.multiple_num)
-            # shuffle after replication
-            train_dpo = train_dpo.shuffle(seed=42)
+    def get_batch(self, batch_idx: int) -> List[tinker.Datum]:
+        """
+        Returns a list of Datums of size self.batch_size
+        """
+        # Calculate which pairs belong to this batch
+        start_idx = batch_idx * self.pairs_per_batch
+        end_idx = start_idx + self.pairs_per_batch
+        
+        # Guard against index out of range (though __len__ should prevent this)
+        if start_idx >= len(self.indices):
+            return []
 
-        print("-----------------------------------------------")
-        print(f"Generated {len(train_dpo)} DPO comparison examples for training.")
-        print(f"Generated {len(test_dpo)} DPO comparison examples for testing.")
-        print("------------------------------------------------")
+        batch_pair_indices = self.indices[start_idx : end_idx]
+        batch_datums = []
 
-        return train_dpo, test_dpo
+        for pair_idx in batch_pair_indices:
+            pair_data = self.pairs[pair_idx]
+            
+            # 1. Add Chosen
+            chosen_datum = self._process_single_item(pair_data, is_rejected=False)
+            batch_datums.append(chosen_datum)
+            
+            # 2. Add Rejected
+            rejected_datum = self._process_single_item(pair_data, is_rejected=True)
+            batch_datums.append(rejected_datum)
+            
+        return batch_datums
+
 
 # -----------------------------------------------------------------------------
-# 3. Evaluator (Unchanged)
+# Evaluator Implementation
 # -----------------------------------------------------------------------------
 
 class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
-    def __init__(self, test_dataset: Dataset, renderer_name: str, tokenizer_model_name: str, max_tokens: int):
+    def __init__(self, test_dataset: HFDataset, renderer_name: str, tokenizer_model_name: str, max_tokens: int):
         self.test_ds = test_dataset
         self.renderer = renderers.get_renderer(renderer_name, tokenizer=get_tokenizer(tokenizer_model_name))
         self.max_tokens = max_tokens
@@ -232,3 +144,57 @@ class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
         preds = await generate(sampling_client, prompts)
         correct = sum(1 for p, t in zip(preds, ground_truths) if p.strip().replace("<|endoftext|>", "").replace(".","").upper() == t)
         return {"test_accuracy": correct / len(preds) if preds else 0.0}
+    
+
+@chz.chz
+class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
+    dataset_path: str = "JasonYan777/novelty-dataset"
+    renderer_name: str
+    model_name: str
+    max_tokens: int = 10
+
+    def __call__(self) -> Evaluator:
+        dataset = load_dataset(self.dataset_path)
+        test_raw = clean_dataset(dataset["test"])
+        test_dpo_pairs = generate_dpo_pairs_from_hf(test_raw)
+        
+        # print
+        print("-----------------------------------------------")
+        print(f"Loaded {len(test_dpo_pairs)} test DPO pairs for evaluation.")
+        print("------------------------------------------------")
+        return NoveltyRankAccuracyEvaluator(
+            test_dataset=test_dpo_pairs,
+            renderer_name=self.renderer_name,
+            tokenizer_model_name=self.model_name,
+            max_tokens=self.max_tokens
+        )
+
+# -----------------------------------------------------------------------------
+# Dataset Builder
+# -----------------------------------------------------------------------------
+
+@chz.chz
+class NoveltyRankDatasetLoader(ChatDatasetBuilder):
+    common_config: ChatDatasetBuilderCommonConfig
+    dataset_path: str = "JasonYan777/novelty-dataset"
+
+    def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
+        logger.info(f"Loading HF dataset: {self.dataset_path}")
+        dataset = load_dataset(self.dataset_path)
+        train_raw = clean_dataset(dataset["train"])
+        logger.info("Converting to DPO pairs...")
+        train_dpo_pairs = generate_dpo_pairs_from_hf(train_raw)
+        # print
+        print("-----------------------------------------------")
+        print(f"Generated {len(train_dpo_pairs)} DPO comparison examples for training.")
+        print("------------------------------------------------")
+
+        # Create the training dataset wrapper
+        train_ds = NoveltyDPODataset(
+            pairs=train_dpo_pairs, 
+            tokenizer=self.tokenizer, 
+            renderer=self.renderer,
+            batch_size=self.common_config.batch_size
+        )
+        
+        return train_ds, None
