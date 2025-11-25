@@ -15,7 +15,7 @@ Dataset hosted at: [Hugging Face – novelty-dataset-with-similarities](https://
 1. **Create a Conda environment**
 
    ```bash
-   conda create -n noveltyrank python=3.10
+   conda create -n noveltyrank python=3.11
    conda activate noveltyrank
    ```
 
@@ -31,7 +31,7 @@ Dataset hosted at: [Hugging Face – novelty-dataset-with-similarities](https://
    ```bash
    git clone git@github.com:ZhengxuYan/NoveltyRank.git
    cd NoveltyRank
-   pip install -e .
+   pip install -r requirements.txt
    ```
 
 4. **create .env file**

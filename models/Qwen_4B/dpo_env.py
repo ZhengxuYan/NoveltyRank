@@ -155,7 +155,7 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
 
     def __call__(self) -> Evaluator:
         dataset = load_dataset(self.dataset_path)
-        test_raw = clean_dataset(dataset["test"])
+        test_raw = clean_dataset(dataset["test"], filter_year=False)
         test_dpo_pairs = generate_dpo_pairs_from_hf(test_raw)
         
         # print
@@ -181,7 +181,7 @@ class NoveltyRankDatasetLoader(ChatDatasetBuilder):
     def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
         logger.info(f"Loading HF dataset: {self.dataset_path}")
         dataset = load_dataset(self.dataset_path)
-        train_raw = clean_dataset(dataset["train"])
+        train_raw = clean_dataset(dataset["train"], filter_year=True)
         logger.info("Converting to DPO pairs...")
         train_dpo_pairs = generate_dpo_pairs_from_hf(train_raw)
         # print

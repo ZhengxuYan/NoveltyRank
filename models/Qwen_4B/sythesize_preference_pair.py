@@ -6,7 +6,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-def clean_dataset(dataset: Dataset) -> Dataset:
+def clean_dataset(dataset: Dataset, filter_year=True) -> Dataset:
     """
     Clean the dataset by removing null similarities, filtering for 2024 dates, and rescaling scores.
     """
@@ -19,6 +19,9 @@ def clean_dataset(dataset: Dataset) -> Dataset:
             example.get("max_similarity") not in [None, "null"]
             and example.get("avg_similarity") not in [None, "null"]
         )
+        
+        if filter_year is False:
+            return similarity_valid
         
         # 2. Check if the year of 'Updated Date' is 2024
         updated_date_str = example.get("Updated Date")
