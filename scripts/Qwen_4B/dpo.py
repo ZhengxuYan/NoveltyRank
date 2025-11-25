@@ -13,13 +13,14 @@ from tinker_cookbook.preference import train_dpo
 from tinker_cookbook import model_info
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
-# Import our custom dataset loa
-from models.Qwen_4B.dpo_env import NoveltyRankDatasetLoader, NoveltyRankEvaluatorBuilder
+# Import our custom dataset loader
+from models.Qwen_4B.dpo_env import NoveltyRankDatasetLoader, NoveltyRankEvaluatorBuilder, CLASSIFICATION_MODE, COMPARISION_MODE
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+CURRENT_MODE = COMPARISION_MODE  # Change to COMPARISION_MODE for pairwise DPO
 # -----------------------------------------------------------------------------
 # Configuration Section
 # -----------------------------------------------------------------------------
@@ -36,23 +37,26 @@ class NoveltyDPOConfig:
     
     # Checkpointing
     load_checkpoint_path: Optional[str] = None
-    log_path: str = "results/noveltyrank_dpo_qwen4b_new"
+    log_path: str = f"results/noveltyrank_dpo_qwen4b_{CURRENT_MODE}"
     
     # Training Hyperparameters
     learning_rate: float = 5e-6
-    batch_size: int = 128
-    num_epochs: int = 10
+    batch_size: int = 64
+    num_epochs: int = 5
     dpo_beta: float = 0.1
     lora_rank: int = 32
     
     # Data processing
     max_length: int = 1024
     renderer_name: Optional[str] = None  # Will auto-detect if None
+    
+    # DPO Mode Selection: "comparison" (Pairwise A/B) or "classification" (Pointwise 1/0)
+    dpo_mode: str = CURRENT_MODE
 
     # Infrastructure
     base_url: Optional[str] = None  # For local/remote service URL
     wandb_project: str = "NoveltyRank"
-    wandb_name: str = "DPO_qwen_4b_new"
+    wandb_name: str = f"DPO_qwen_4b_{CURRENT_MODE}"
 
 
 # -----------------------------------------------------------------------------
@@ -65,6 +69,7 @@ def main(env_config: NoveltyDPOConfig):
     dataset_path = "JasonYan777/novelty-rank-with-similarities"
 
     logger.info(f"Starting DPO training for model: {env_config.model_name}")
+    logger.info(f"DPO Mode: {env_config.dpo_mode}")
 
     # 2. Determine Renderer
     renderer_name = env_config.renderer_name or model_info.get_recommended_renderer_name(
@@ -81,7 +86,8 @@ def main(env_config: NoveltyDPOConfig):
     
     dataset_builder = NoveltyRankDatasetLoader(
         common_config=common_ds_config,
-        dataset_path=dataset_path
+        dataset_path=dataset_path,
+        dpo_mode=env_config.dpo_mode  # Pass the selected mode to the loader
     )
 
     # 4. Initialize Evaluator Builder
@@ -89,6 +95,7 @@ def main(env_config: NoveltyDPOConfig):
         dataset_path=dataset_path,
         renderer_name=renderer_name,
         model_name=env_config.model_name,
+        dpo_mode=env_config.dpo_mode  # Pass the selected mode to the evaluator
     )
 
     # 5. Construct the Main DPO Training Configuration

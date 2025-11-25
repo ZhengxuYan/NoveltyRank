@@ -7,7 +7,7 @@ from typing import Any, List, Tuple, Dict, Union, Optional
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 import chz
-from datasets import load_dataset, Dataset as HFDataset
+from datasets import load_dataset, load_from_disk, Dataset as HFDataset
 
 # Add current path to sys.path to ensure tinker modules can be found
 sys.path.append(os.getcwd())
@@ -24,10 +24,13 @@ from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 
 logger = logging.getLogger(__name__)
 
+# Constants for mode selection
+COMPARISION_MODE = "comparison"
+CLASSIFICATION_MODE = "classification"
+
 # -----------------------------------------------------------------------------
 # Import Helpers from External Module (User Logic)
 # -----------------------------------------------------------------------------
-# Temporarily add the grandparent directory to path to find models module
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # Assuming the structure involves going up two levels to find 'models'
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
@@ -35,7 +38,8 @@ sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 try:
     from models.Qwen_4B.sythesize_preference_pair import (
         clean_dataset,
-        generate_dpo_pairs_from_hf,
+        generate_comparison_dpo_pairs,     # Ensure this matches your filename
+        generate_classification_dpo_pairs
     )
 except ImportError as e:
     logger.error("Failed to import helper functions. Please check your path structure.")
@@ -49,7 +53,6 @@ class NoveltyDPODataset(SupervisedDataset):
     """
     A dataset that flattens DPO pairs into an interleaved sequence:
     [Chosen_0, Rejected_0, Chosen_1, Rejected_1, ...]
-    This is required by the tinker-cookbook DPO implementation.
     """
     def __init__(self, pairs: List[Dict], tokenizer: Tokenizer, renderer: renderers.Renderer, batch_size: int):
         self.pairs = pairs
@@ -93,7 +96,6 @@ class NoveltyDPODataset(SupervisedDataset):
         start_idx = batch_idx * self.pairs_per_batch
         end_idx = start_idx + self.pairs_per_batch
         
-        # Guard against index out of range (though __len__ should prevent this)
         if start_idx >= len(self.indices):
             return []
 
@@ -152,16 +154,47 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
     renderer_name: str
     model_name: str
     max_tokens: int = 10
+    
+    # Mode selection
+    dpo_mode: str = COMPARISION_MODE
+
+    # Cache paths
+    local_comparison_cache_path: str = "data_cache/test_dpo_pairs_comparison"
+    local_classification_cache_path: str = "data_cache/test_dpo_pairs_classification"
 
     def __call__(self) -> Evaluator:
-        dataset = load_dataset(self.dataset_path)
-        test_raw = clean_dataset(dataset["test"], filter_year=False)
-        test_dpo_pairs = generate_dpo_pairs_from_hf(test_raw)
+        # Determine paths and functions based on mode
+        if self.dpo_mode == CLASSIFICATION_MODE:
+            target_cache_path = self.local_classification_cache_path
+            gen_func = generate_classification_dpo_pairs
+            mode_name = "Classification (1/0)"
+        else:
+            target_cache_path = self.local_comparison_cache_path
+            gen_func = generate_comparison_dpo_pairs
+            mode_name = "Comparison (A/B)"
+
+        # Check if local cache exists
+        if os.path.exists(target_cache_path):
+            logger.info(f"Local test cache detected at {target_cache_path}. Loading from disk...")
+            test_dpo_pairs = load_from_disk(target_cache_path)
+        else:
+            logger.info(f"No local test cache found. Downloading from {self.dataset_path} and processing for {mode_name}...")
+            dataset = load_dataset(self.dataset_path)
+            test_raw = clean_dataset(dataset["test"], filter_year=False)
+            
+            logger.info(f"Generating {mode_name} test pairs...")
+            test_dpo_pairs = gen_func(test_raw)
+            
+            # Save to disk for next time
+            logger.info(f"Saving processed test pairs to {target_cache_path}...")
+            test_dpo_pairs.save_to_disk(target_cache_path)
         
-        # print
+        # only take 1000 expamples for evaluation speed
+        test_dpo_pairs = test_dpo_pairs.select(range(1000))
         print("-----------------------------------------------")
-        print(f"Loaded {len(test_dpo_pairs)} test DPO pairs for evaluation.")
+        print(f"Loaded {len(test_dpo_pairs)} test DPO pairs ({mode_name}) for evaluation.")
         print("------------------------------------------------")
+        
         return NoveltyRankAccuracyEvaluator(
             test_dataset=test_dpo_pairs,
             renderer_name=self.renderer_name,
@@ -177,16 +210,43 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
 class NoveltyRankDatasetLoader(ChatDatasetBuilder):
     common_config: ChatDatasetBuilderCommonConfig
     dataset_path: str
+    
+    # Mode selection
+    dpo_mode: str = COMPARISION_MODE # or CLASSIFICATION_MODE
+
+    # Local cache configurations
+    local_comparison_cache_path: str = "data_cache/train_dpo_pairs_comparison"
+    local_classification_cache_path: str = "data_cache/train_dpo_pairs_classification"
 
     def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
-        logger.info(f"Loading HF dataset: {self.dataset_path}")
-        dataset = load_dataset(self.dataset_path)
-        train_raw = clean_dataset(dataset["train"], filter_year=True)
-        logger.info("Converting to DPO pairs...")
-        train_dpo_pairs = generate_dpo_pairs_from_hf(train_raw)
-        # print
+        # Determine paths and functions based on mode
+        if self.dpo_mode == CLASSIFICATION_MODE:
+            target_cache_path = self.local_classification_cache_path
+            gen_func = generate_classification_dpo_pairs
+            mode_name = "Classification (1/0)"
+        else:
+            target_cache_path = self.local_comparison_cache_path
+            gen_func = generate_comparison_dpo_pairs
+            mode_name = "Comparison (A/B)"
+
+        # Check if local cache exists
+        if os.path.exists(target_cache_path):
+            logger.info(f"Local train cache detected at {target_cache_path}. Loading from disk...")
+            train_dpo_pairs = load_from_disk(target_cache_path)
+        else:
+            logger.info(f"No local train cache found. Downloading from {self.dataset_path} and processing for {mode_name}...")
+            dataset = load_dataset(self.dataset_path)
+            train_raw = clean_dataset(dataset["train"], filter_year=True)
+            
+            logger.info(f"Generating {mode_name} DPO pairs...")
+            train_dpo_pairs = gen_func(train_raw)
+            
+            # Save to disk for next time
+            logger.info(f"Saving processed train pairs to {target_cache_path}...")
+            train_dpo_pairs.save_to_disk(target_cache_path)
+
         print("-----------------------------------------------")
-        print(f"Generated {len(train_dpo_pairs)} DPO comparison examples for training.")
+        print(f"Loaded {len(train_dpo_pairs)} DPO examples ({mode_name}) for training.")
         print("------------------------------------------------")
 
         # Create the training dataset wrapper

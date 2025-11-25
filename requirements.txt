@@ -19,3 +19,6 @@ tqdm>=4.65.0
 # HuggingFace
 datasets>=2.14.0
 huggingface_hub>=0.17.0
+
+# monitor
+wandb
