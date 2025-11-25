@@ -8,6 +8,7 @@ from typing import Optional
 sys.path.append(os.getcwd())
 
 # Tinker imports
+from dotenv import load_dotenv
 from tinker_cookbook.preference import train_dpo
 from tinker_cookbook import model_info
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
@@ -122,4 +123,5 @@ def main(env_config: NoveltyDPOConfig):
     train_dpo.main(dpo_config)
 
 if __name__ == "__main__":
+    load_dotenv()  # Load environment variables from .env file if present
     chz.entrypoint(main)
