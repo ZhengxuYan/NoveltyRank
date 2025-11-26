@@ -69,6 +69,7 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         self.test_data = self.test_data.shuffle(seed=42)
         # Select a sample size (min(1000, total_size))
         self.test_data = self.test_data.select(range(min(1000, len(self.test_data))))
+        logger.info(f"[Evaluator] Using {len(self.test_data)} samples for evaluation.")
 
         self.model_name = model_name
         self.max_tokens = max_tokens
@@ -206,6 +207,8 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
 
         if self.balance_dataset:
             train_ds = _balance_dataset_by_upsampling(train_ds)
+    
+        logger.info(f"[DataBuilder] Final training dataset size: {len(train_ds)}")
 
         sft_renderer = SFTChatRenderer(self.renderer)
 

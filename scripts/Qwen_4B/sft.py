@@ -26,7 +26,7 @@ def build_config(
     dataset_path: str = "JasonYan777/novelty-rank-with-similarities",
     max_length: int = 4096,
     learning_rate: float = 2e-4,
-    batch_size: int = 1024,
+    batch_size: int = 128,
     num_epochs: int = 5,
     eval_every: int = 24,
     wandb_project: str = "NoveltyRank",

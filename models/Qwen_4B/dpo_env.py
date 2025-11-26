@@ -190,10 +190,8 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
             test_dpo_pairs.save_to_disk(target_cache_path)
         
         # only take 1000 expamples for evaluation speed
-        test_dpo_pairs = test_dpo_pairs.select(range(1000))
-        print("-----------------------------------------------")
-        print(f"Loaded {len(test_dpo_pairs)} test DPO pairs ({mode_name}) for evaluation.")
-        print("------------------------------------------------")
+        test_dpo_pairs = test_dpo_pairs.select(range(min(1000, len(test_dpo_pairs))))
+        logger.info(f"Loaded {len(test_dpo_pairs)} test DPO pairs ({mode_name}) for evaluation.")
         
         return NoveltyRankAccuracyEvaluator(
             test_dataset=test_dpo_pairs,
@@ -245,9 +243,7 @@ class NoveltyRankDatasetLoader(ChatDatasetBuilder):
             logger.info(f"Saving processed train pairs to {target_cache_path}...")
             train_dpo_pairs.save_to_disk(target_cache_path)
 
-        print("-----------------------------------------------")
-        print(f"Loaded {len(train_dpo_pairs)} DPO examples ({mode_name}) for training.")
-        print("------------------------------------------------")
+        logger.info(f"Loaded {len(train_dpo_pairs)} DPO examples ({mode_name}) for training.")
 
         # Create the training dataset wrapper
         train_ds = NoveltyDPODataset(
