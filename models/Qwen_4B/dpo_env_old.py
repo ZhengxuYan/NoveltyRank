@@ -25,7 +25,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer, Tokenizer
 import os, sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
-from models.Qwen_4B.sythesize_preference_pair import clean_dataset, generate_dpo_pairs_from_hf
+from models.Qwen_4B.utils import clean_dataset, generate_dpo_pairs_from_hf
 
 logger = logging.getLogger(__name__)
 

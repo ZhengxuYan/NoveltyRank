@@ -1,9 +1,13 @@
-from typing import cast
-from datasets import Dataset, load_dataset
-
+import os
+import sys
+import logging
 import chz
 import re
 import asyncio
+from typing import cast, Optional, List, Dict, Tuple
+# Import load_from_disk here
+from datasets import Dataset, load_dataset, load_from_disk 
+
 import tinker
 from tinker import types
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
@@ -13,63 +17,63 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilder
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 from tinker_cookbook import renderers
-from typing import List, Dict, Tuple
 import torch
 
+# Setup paths to find custom modules
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Assuming the structure involves going up two levels to find 'models'
+sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
+# Assuming clean_dataset is available from this utility path
+from models.Qwen_4B.utils import clean_dataset, generate_prompts_and_labels
 
-# clean the unexsited similarity entries and rescale similarity scores
-def clean_dataset(dataset: Dataset) -> Dataset:
-    """
-    Clean the dataset by removing any unwanted or irrelevant examples.
-    """
-    # Implement your cleaning logic here
-    dataset = dataset.filter(
-        lambda example: example.get("max_similarity") not in [None, "null"]
-        and example.get("avg_similarity") not in [None, "null"]
-    )
-
-    # Rescale similarity scores from 0-1 to min - max
-    max_similarity_values = [float(item["max_similarity"]) for item in dataset]
-    avg_similarity_values = [float(item["avg_similarity"]) for item in dataset]
-
-    max_similarity = max(max_similarity_values) if max_similarity_values else 1
-    min_similarity = min(avg_similarity_values) if avg_similarity_values else 0
-    for item in dataset:
-        item["max_similarity"] = (float(item["max_similarity"]) - min_similarity) / (max_similarity - min_similarity) if max_similarity != min_similarity else 0
-        item["avg_similarity"] = (float(item["avg_similarity"]) - min_similarity) / (max_similarity - min_similarity) if max_similarity != min_similarity else 0
-
-    return dataset
+# Configure basic logging
+logger = logging.getLogger(__name__)
 
 # =========================================================
 # Create AccuracyOnLabeledTestSetEvaluator
 # =========================================================
 class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
     """
-    Evaluate model accuracy on a labeled test set.
-    The test set contains user prompts and assistant responses ("0" or "1") as ground-truth labels.
-
-    Each test example:
-    {
-        "messages": [
-            {"role": "user", "content": "..."},
-            {"role": "assistant", "content": "1"}
-        ]
-    }
-
-    This evaluator feeds the user message to the model, 
-    generates a prediction ("0" or "1"), 
-    and computes accuracy = (# of correct predictions / total examples).
+    Evaluates model accuracy on a labeled test set (0 or 1 classification).
+    This evaluator computes accuracy, precision, recall, and F1 score.
     """
 
-    def __init__(self, dataset_path: str, model_name: str, max_tokens: int = 16):
-        dataset = load_dataset(dataset_path)
-        self.train_data = clean_dataset(dataset["train"])
-        self.test_data = clean_dataset(dataset["test"])
+    def __init__(self, dataset_path: str, model_name: str, max_tokens: int = 16, local_cache_path: str = "data_cache/test_sft_data"):
+        
+        # Define the path for the specific 'test' split inside the cache directory
+        local_split_path = os.path.join(local_cache_path, "test_split_cleaned")
+        
+        # ------------------------------------------------------------------
+        # FEATURE: Check Local -> Load Cleaned Data; Else -> Web -> Clean -> Save
+        # ------------------------------------------------------------------
+        if os.path.exists(local_split_path):
+            logger.info(f"[Evaluator] Local CLEANED cache found at {local_split_path}. Loading from disk...")
+            # OPTIMIZATION: Load the single split directly (faster)
+            cleaned_test_ds = load_from_disk(local_split_path)
+        else:
+            logger.info(f"[Evaluator] No local cache found. Downloading {dataset_path} from web...")
+            dataset = load_dataset(dataset_path)
+            
+            # 1. Execute cleaning operation
+            logger.info("[Evaluator] Downloading complete. Starting data cleaning...")
+            cleaned_test_ds = clean_dataset(dataset["test"], filter_year=False)
+            
+            # 2. OPTIMIZATION: Save the single split directly, avoiding Dataset.from_dict() overhead
+            logger.info(f"[Evaluator] Cleaning complete, saving split directly to {local_split_path}...")
+            cleaned_test_ds.save_to_disk(local_split_path)
+        
+        self.test_data = cleaned_test_ds
+        # ------------------------------------------------------------------
+
+        # Further sampling and processing for the evaluation run
+        self.test_data = self.test_data.shuffle(seed=42)
+        # Select a sample size (min(1000, total_size))
+        self.test_data = self.test_data.select(range(min(1000, len(self.test_data))))
 
         self.model_name = model_name
         self.max_tokens = max_tokens
 
-        # Create a renderer + tokenizer for encoding/decoding text
+        # Create a tokenizer for encoding/decoding text
         self.tokenizer = get_tokenizer(model_name)
         self.service_client = tinker.ServiceClient()
 
@@ -82,6 +86,7 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
             """
             Query the model for a single prediction ("0" or "1").
             """
+            # Implementation details for asynchronous sampling...
             response = await sampling_client.sample_async(
                 prompt=tinker.types.ModelInput.from_ints(
                     self.tokenizer.encode(prompt_text)
@@ -92,6 +97,7 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
                 num_samples=1,
             )
             decoded = self.tokenizer.decode(response.sequences[0].tokens).strip()
+            # Use regex to find the first '0' or '1' digit output by the model
             match = re.findall(r'[01]', decoded)
             decoded = match[0] if match else ""
             return decoded
@@ -100,7 +106,8 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         prompts = []
         labels = []
         for ex in self.test_data:
-            user_prompts, user_labels = generate_prompts_and_labels(ex)
+            # generate_prompts_and_labels is defined below
+            user_prompts, user_labels = generate_prompts_and_labels(ex) 
             prompts.append(user_prompts)
             labels.append(user_labels)
 
@@ -108,12 +115,12 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         tasks = [get_prediction(p) for p in prompts]
         predictions = await asyncio.gather(*tasks)
 
-        # Compute accuracy, precision, recall
+        # Compute accuracy, precision, recall based on binary classification metrics
         tp = sum(1 for p, l in zip(predictions, labels) if p == "1" and l == "1")
         fp = sum(1 for p, l in zip(predictions, labels) if p == "1" and l == "0")
         fn = sum(1 for p, l in zip(predictions, labels) if p == "0" and l == "1")
         tn = sum(1 for p, l in zip(predictions, labels) if p == "0" and l == "0")
-        un_resolved = sum(1 for p in predictions if p not in ["0", "1"])
+        un_resolved = sum(1 for p in predictions if p not in ["0", "1"]) # Count non-binary outputs
 
         total = tp + fp + fn + tn + un_resolved
         accuracy = (tp + tn) / total if total > 0 else 0.0
@@ -129,10 +136,8 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
 # ==========================================================
 class SFTChatRenderer:
     """
-    A wrapper around a Chat Renderer (e.g., Qwen3InstructRenderer)
-    for standard single-turn SFT tasks.
-    Converts a conversation [{'role': 'user', ...}, {'role': 'assistant', ...}]
-    into token/weight tensors usable by datum_from_tokens_weights.
+    A wrapper around a Chat Renderer for standard single-turn SFT tasks.
+    It converts a chat conversation into token/weight tensors.
     """
 
     def __init__(self, base_renderer: renderers.Renderer):
@@ -143,16 +148,10 @@ class SFTChatRenderer:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Convert a chat-style conversation (user + assistant) to token IDs and weights.
-
-        conversation example:
-        [
-            {"role": "user", "content": "..."},
-            {"role": "assistant", "content": "1"}
-        ]
         """
         tokens, weights = self.base_renderer.build_supervised_example(
             conversation,
-            train_on_what=renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES  # train only on assistant replies
+            train_on_what=renderers.TrainOnWhat.ALL_ASSISTANT_MESSAGES  # Train only on assistant replies
         )
         return tokens, weights
 
@@ -160,70 +159,7 @@ class SFTChatRenderer:
     def tokenizer(self):
         return self.base_renderer.tokenizer
 
-# generate prompts for testing
-def generate_prompts_and_labels(example: dict[str, str]) -> list[dict[str, str]]:
-    title = example.get("Title", "")
-    authors = example.get("Authors", "")
-    abstract = example.get("Abstract", "")
-    max_sim = example.get("max_similarity", "N/A")
-    avg_sim = example.get("average_similarity", "N/A")
-    label = example.get("label", "")
-    
-    # generate user prompt
-    user_prompt = f"""
-            You are an expert AI researcher and senior conference reviewer (NeurIPS/ICLR level). 
-            Your goal is to **assess the conceptual novelty** of a new research paper,
-            based on not only comparing surface similarity but also reasoning about the *conceptual depth* and *potential paradigm shift* introduced by the paper.
-            
-            ---
-            ### Step-by-step reasoning:
-            1. **Understand** the paper’s main idea, contribution, and context from its title and abstract.
-            2. **Compare** it conceptually against prior literature (based on the given similarity metrics).
-            3. **Evaluate** whether the paper represents:
-               - Incremental improvement (minor variation),
-               - A novel combination or extension,
-               - Or a potentially *field-shaping* innovation that may start a new research direction.
-            4. **Predict** whether this project is likely to have *high influence* or *define a new paradigm*.
-            5. Finally, output a binary decision:
-               - Output `'1'` if the paper is conceptually novel and likely to influence future research,
-               - Output `'0'` otherwise.
-            
-            ---
-            ### Input
-            Title: {title}
-            Authors: {authors}
-            Abstract: {abstract}
-            Max similarity to prior work: {max_sim}
-            Average similarity to prior work: {avg_sim}
-            
-            ---
-            ### Few-shot Examples
-            
-            **Example 1**
-            Title: "Attention Is All You Need"
-            Abstract: Introduces the Transformer architecture, replacing recurrence with attention mechanisms for sequence modeling.
-            Max similarity: 0.68 | Avg similarity: 0.55  
-            **Reasoning:** Although not completely dissimilar to prior seq2seq models, the conceptual innovation (self-attention, parallelization) defines a new paradigm.  
-            **Output:** 1
-            
-            **Example 2**
-            Title: "A Slightly Improved BERT Model with Layer-wise Dropout"
-            Abstract: Modifies BERT with small regularization tweaks and hyperparameter tuning for better stability.
-            Max similarity: 0.91 | Avg similarity: 0.82  
-            **Reasoning:** Highly similar to prior work and lacks new conceptual insights.  
-            **Output:** 0
-            
-            **Example 3**
-            Title: "Aligning LLMs with Value-Constrained Reinforcement Learning"
-            Abstract: Proposes a reinforcement learning approach with explicit value constraints to align LLM behavior.
-            Max similarity: 0.73 | Avg similarity: 0.64  
-            **Reasoning:** Builds on known RLHF methods but introduces a novel constrained optimization view; moderately novel.  
-            **Output:** 1
-            
-            ---
-            Now, reason through the given paper step by step and output only '1' or '0'.
-            """
-    return (user_prompt, str(label))
+
         
 
 # ==========================================================
@@ -232,17 +168,40 @@ def generate_prompts_and_labels(example: dict[str, str]) -> list[dict[str, str]]
 @chz.chz
 class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
     """
-    Build an SFT dataset for novelty ranking using a Hugging Face dataset.
+    Builds an SFT dataset for novelty ranking using a Hugging Face dataset.
     """
-    dataset_path: str = chz.field(
-        default="JasonYan777/novelty-ranking-dataset"
+    dataset_path: str
+
+    # ADDED: Configuration for local path
+    local_cache_path: str = chz.field(
+        default="data_cache/train_sft_data",
     )
 
     def __call__(self):
-        # load the dataset from Hugging Face
-        dataset = load_dataset(self.dataset_path)
-        train_ds = cast(Dataset, clean_dataset(dataset["train"]))
-        test_ds = cast(Dataset, clean_dataset(dataset["test"]))
+        
+        local_split_path = os.path.join(self.local_cache_path, "train_split_cleaned")
+        
+        # ------------------------------------------------------------------
+        # FEATURE: Check Local -> Load Cleaned Data; Else -> Web -> Clean -> Save
+        # ------------------------------------------------------------------
+        if os.path.exists(local_split_path):
+            logger.info(f"[DataBuilder] Local CLEANED cache found at {local_split_path}. Loading from disk...")
+            # OPTIMIZATION: Load the single split directly (faster)
+            train_ds = load_from_disk(local_split_path)
+        else:
+            logger.info(f"[DataBuilder] No local cache found. Downloading {self.dataset_path} from web...")
+            dataset = load_dataset(self.dataset_path)
+            
+            # 1. Execute cleaning operation
+            logger.info("[DataBuilder] Downloading complete. Starting data cleaning...")
+            cleaned_train_ds = cast(Dataset, clean_dataset(dataset["train"]))
+            
+            # 2. OPTIMIZATION: Save the single split directly, avoiding Dataset.from_dict() overhead
+            logger.info(f"[DataBuilder] Cleaning complete, saving split directly to {local_split_path}...")
+            cleaned_train_ds.save_to_disk(local_split_path)
+            
+            train_ds = cleaned_train_ds
+        # ------------------------------------------------------------------
 
         sft_renderer = SFTChatRenderer(self.renderer)
 
@@ -258,7 +217,8 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
 
             # convert conversation to Datum
             tokens, weights = sft_renderer.to_tokens_weights(conversation)
-            datum = datum_from_tokens_weights(tokens, weights, self.common_config.max_length)
+            # Use max_length from common config
+            datum = datum_from_tokens_weights(tokens, weights, self.common_config.max_length) 
             return [datum]
 
         # transform datasets to SupervisedDatasets
@@ -268,9 +228,5 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
                 batch_size=self.common_config.batch_size,
                 flatmap_fn=example_to_datum,
             ),
-            SupervisedDatasetFromHFDataset(
-                test_ds,
-                batch_size=self.common_config.batch_size,
-                flatmap_fn=example_to_datum,
-            ),
+            None,  # No validation set
         )

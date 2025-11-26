@@ -1,13 +1,13 @@
 # __init__.py
 """
-Initialize model samplers and handle prompt construction logic.
+Initialize model samplers and handle prompt construction logic for comparison tasks.
 """
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from models.Qwen_4B.sft_env import generate_prompts_and_labels, clean_dataset
+from models.Qwen_4B.utils import clean_dataset, generate_comparison_dpo_pairs
 import asyncio
-from datasets import Dataset, load_dataset
+from datasets import Dataset, load_dataset, load_from_disk
 
 import re
 import tinker
@@ -65,45 +65,73 @@ class TinkerSampler():
         return response_message
     
 async def process_one(data, sampler):
-    user_prompt, label = generate_prompts_and_labels(data)
-    messages = [
-        renderers.Message(role="user", content=user_prompt)
-    ]
+    # data is a row from the DPO pairs dataset
+    messages = data["prompt_conversation"]
+    label = data["chosen"][0]["content"]
+    
     prediction = await sampler.generate(messages)
     prediction = prediction['content']
-    # Extract "0" or "1" from prediction using regex
-    match = re.search(r'\b(0|1)\b', prediction)
-    prediction = match[0] if match else ""
+    
+    # Extract "A" or "B" from prediction using regex
+    match = re.search(r'\b(A|B)\b', prediction, re.IGNORECASE)
+    prediction = match.group(0).upper() if match else ""
+    
     return prediction, label
 
 async def main():
-    dataset = load_dataset("JasonYan777/novelty-dataset", split="test")
-    dataset = clean_dataset(dataset)
-    # dataset = dataset.select(range(10)) # For testing, use only first 10 samples
+    # --- Configuration ---
+    dataset_path = "JasonYan777/novelty-rank-with-similarities"
+    local_sft_cache_path = "data_cache/test_sft_data"
+    local_dpo_cache_path = "data_cache/test_dpo_pairs_comparison"
+    
+    # --- Data Loading with Caching Feature ---
+    if os.path.exists(local_dpo_cache_path):
+        print(f"Local DPO comparison cache found at {local_dpo_cache_path}. Loading from disk...")
+        dataset = load_from_disk(local_dpo_cache_path)
+    else:
+        print(f"No local DPO comparison cache found. Processing data...")
+        if os.path.exists(local_sft_cache_path):
+            print(f"Loading cleaned data from {local_sft_cache_path}...")
+            cleaned_dataset = load_from_disk(local_sft_cache_path)
+        else:
+            print(f"No cleaned data cache found. Downloading {dataset_path} from web...")
+            dataset_raw = load_dataset(dataset_path, split="test")
+            
+            print("Downloading complete. Starting data cleaning...")
+            cleaned_dataset = clean_dataset(dataset_raw, filter_year=False)
+            
+            print(f"Cleaning complete, saving cleaned dataset to: {local_sft_cache_path}...")
+            cleaned_dataset.save_to_disk(local_sft_cache_path)
+
+        print("Generating comparison DPO pairs...")
+        dataset = generate_comparison_dpo_pairs(cleaned_dataset)
+        print(f"Saving DPO comparison dataset to: {local_dpo_cache_path}...")
+        dataset.save_to_disk(local_dpo_cache_path)
+
+    # --- End of main function logic ---
+    print(f"Successfully loaded DPO comparison dataset of size: {len(dataset)}")
+    dataset = dataset.select(range(min(1000, len(dataset))))  # Limit to 1000 samples or less
+
+    # Initialize sampler
     sampler = TinkerSampler(model_name="Qwen/Qwen3-4B-Instruct-2507",
                             model_path="tinker://90ce9e55-9e89-4976-878b-c7f474fe92c0/sampler_weights/final",
-                            temperature=0.0, max_tokens=512)
+                            temperature=0.0, max_tokens=10)
 
     # asyncio generate predictions
     results = await asyncio.gather(*[process_one(data, sampler) for data in dataset])
     predictions, labels = zip(*results)
 
-    # Compute accuracy, precision, recall
-    tp = sum(1 for p, l in zip(predictions, labels) if p == "1" and l == "1")
-    fp = sum(1 for p, l in zip(predictions, labels) if p == "1" and l == "0")
-    fn = sum(1 for p, l in zip(predictions, labels) if p == "0" and l == "1")
-    tn = sum(1 for p, l in zip(predictions, labels) if p == "0" and l == "0")
-    un_resolved = sum(1 for p in predictions if p not in ["0", "1"])
+    # Compute accuracy
+    correct = sum(1 for p, l in zip(predictions, labels) if p == l)
+    total = len(predictions)
+    accuracy = correct / total if total > 0 else 0.0
+    
+    un_resolved = sum(1 for p in predictions if p not in ["A", "B"])
 
-    total = tp + fp + fn + tn + un_resolved
-    accuracy = (tp + tn) / total if total > 0 else 0.0
-    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-    F1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    print(f"Total: {total}, Correct: {correct}, Unresolved: {un_resolved}")
 
-    return {"test_accuracy": accuracy, "test_precision": precision, "test_recall": recall, "test_F1": F1}
+    return {"test_accuracy": accuracy}
 
 if __name__ == "__main__":
-
     results = asyncio.run(main())
     print(results)

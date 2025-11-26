@@ -36,7 +36,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 
 try:
-    from models.Qwen_4B.sythesize_preference_pair import (
+    from models.Qwen_4B.utils import (
         clean_dataset,
         generate_comparison_dpo_pairs,     # Ensure this matches your filename
         generate_classification_dpo_pairs

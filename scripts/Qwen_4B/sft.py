@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 import chz
+import asyncio
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook import model_info
@@ -21,7 +22,7 @@ from models.Qwen_4B.sft_env import NoveltyRankSFTDataBuilder, AccuracyOnLabeledT
     
 def build_config(
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
-    log_path: str = "results/noveltyrank_sft_hf_v4",
+    log_path: str = "results/noveltyrank_sft_qwen4b",
     dataset_path: str = "JasonYan777/novelty-rank-with-similarities",
     max_length: int = 4096,
     learning_rate: float = 2e-4,
@@ -29,7 +30,7 @@ def build_config(
     num_epochs: int = 5,
     eval_every: int = 24,
     wandb_project: str = "NoveltyRank",
-    wandb_name: str = "4b_sft_from_hf_v4",
+    wandb_name: str = "sft_qwen_4b",
 ) -> train.Config:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     common_config = ChatDatasetBuilderCommonConfig(
@@ -63,11 +64,14 @@ def build_config(
     )
 
 
-def main():
+# --- MODIFIED MAIN FUNCTION ---
+async def main():
     load_dotenv()
-    config = build_config()
+    # chz.entrypoint automatically handles configuration parsing before calling main
+    config = build_config() 
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
-    train.main(config)
+    await train.main(config) 
+
 
 if __name__ == "__main__":
-    chz.entrypoint(main, allow_hyphens=True)
+    asyncio.run(chz.entrypoint(main, allow_hyphens=True))
