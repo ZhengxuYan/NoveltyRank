@@ -5,7 +5,6 @@ import chz
 import re
 import asyncio
 from typing import cast, Optional, List, Dict, Tuple
-# Import load_from_disk here
 from datasets import Dataset, load_dataset, load_from_disk 
 
 import tinker
@@ -25,6 +24,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 # Assuming clean_dataset is available from this utility path
 from models.Qwen_4B.utils import clean_dataset, generate_prompts_and_labels, _balance_dataset_by_upsampling
+from models.Qwen_4B.utils.pipelines import (
+    WHOLE_DATASET,
+    DEFAULT_TRAIN_CACHE_DIR,
+    DEFAULT_TEST_CACHE_DIR,
+    ensure_base_sft_splits,
+    ensure_category_resources,
+)
 
 # Configure basic logging
 logger = logging.getLogger(__name__)
@@ -38,10 +44,39 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
     This evaluator computes accuracy, precision, recall, and F1 score.
     """
 
-    def __init__(self, dataset_path: str, model_name: str, max_tokens: int = 16, local_cache_path: str = "data_cache/test_sft_data"):
+    def __init__(
+        self,
+        dataset_path: str,
+        model_name: str,
+        max_tokens: int = 16,
+        local_cache_path: str = DEFAULT_TEST_CACHE_DIR,
+        *,
+        category: str = WHOLE_DATASET,
+        category_outdir: str = "data_cache",
+        category_seed: Optional[int] = None,
+        train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR,
+    ):
         
         # Define the path for the specific 'test' split inside the cache directory
-        local_split_path = os.path.join(local_cache_path, "test_split_cleaned")
+        train_split, test_split = ensure_base_sft_splits(
+            dataset_path,
+            train_cache_dir=train_cache_path,
+            test_cache_dir=local_cache_path,
+        )
+
+        if category == WHOLE_DATASET:
+            local_split_path = test_split
+        else:
+            paths = ensure_category_resources(
+                category=category,
+                dataset_path=dataset_path,
+                train_split=train_split,
+                test_split=test_split,
+                outdir=category_outdir,
+                seed=category_seed,
+                need_sft=True,
+            )
+            local_split_path = paths.test_sft
         
         # ------------------------------------------------------------------
         # FEATURE: Check Local -> Load Cleaned Data; Else -> Web -> Clean -> Save
@@ -173,37 +208,35 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
     """
     dataset_path: str
 
-    # ADDED: Configuration for local path
-    local_cache_path: str = chz.field(
-        default="data_cache/train_sft_data",
-    )
+    local_cache_path: str = chz.field(default=DEFAULT_TRAIN_CACHE_DIR)
+    test_cache_path: str = chz.field(default=DEFAULT_TEST_CACHE_DIR)
+    category: str = chz.field(default=WHOLE_DATASET)
+    category_outdir: str = chz.field(default="data_cache")
+    category_seed: Optional[int] = chz.field(default=None)
     balance_dataset: bool = True
 
     def __call__(self):
-        
-        local_split_path = os.path.join(self.local_cache_path, "train_split_cleaned")
-        
-        # ------------------------------------------------------------------
-        # FEATURE: Check Local -> Load Cleaned Data; Else -> Web -> Clean -> Save
-        # ------------------------------------------------------------------
-        if os.path.exists(local_split_path):
-            logger.info(f"[DataBuilder] Local CLEANED cache found at {local_split_path}. Loading from disk...")
-            # OPTIMIZATION: Load the single split directly (faster)
-            train_ds = load_from_disk(local_split_path)
+        train_split, test_split = ensure_base_sft_splits(
+            self.dataset_path,
+            train_cache_dir=self.local_cache_path,
+            test_cache_dir=self.test_cache_path,
+        )
+
+        if self.category == WHOLE_DATASET:
+            train_dataset_path = train_split
         else:
-            logger.info(f"[DataBuilder] No local cache found. Downloading {self.dataset_path} from web...")
-            dataset = load_dataset(self.dataset_path)
-            
-            # 1. Execute cleaning operation
-            logger.info("[DataBuilder] Downloading complete. Starting data cleaning...")
-            cleaned_train_ds = cast(Dataset, clean_dataset(dataset["train"]))
-            
-            # 2. OPTIMIZATION: Save the single split directly, avoiding Dataset.from_dict() overhead
-            logger.info(f"[DataBuilder] Cleaning complete, saving split directly to {local_split_path}...")
-            cleaned_train_ds.save_to_disk(local_split_path)
-            
-            train_ds = cleaned_train_ds
-        # ------------------------------------------------------------------
+            paths = ensure_category_resources(
+                category=self.category,
+                dataset_path=self.dataset_path,
+                train_split=train_split,
+                test_split=test_split,
+                outdir=self.category_outdir,
+                seed=self.category_seed,
+                need_sft=True,
+            )
+            train_dataset_path = paths.train_sft
+
+        train_ds = load_from_disk(train_dataset_path)
 
         if self.balance_dataset:
             train_ds = _balance_dataset_by_upsampling(train_ds)

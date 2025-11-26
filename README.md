@@ -123,8 +123,53 @@ Outputs include top-10 similar papers with scores for each paper in the dataset.
 python scripts/Qwen_4B/sft.py
 ```
 
+> The training CLIs are powered by `chz`, so override arguments with `key=value` syntax.
+
+Common invocations:
+
+```bash
+# Whole-dataset SFT (default)
+python scripts/Qwen_4B/sft.py
+
+# Category-specific SFT (example: cs.CV)
+python scripts/Qwen_4B/sft.py category=cs.CV category_seed=42
+```
+
+If the script detects an existing log directory it will ask whether to delete, resume, or exit. Respond at the prompt to control the behavior.
+
 If you want to customize hyperparameters, you can modify the `build_config` function in 
 `scripts/Qwen_4B/sft.py`.
+
+#### Qwen3-4B DPO Training
+
+Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypoint. When using a Tinker checkpoint URI for `model_name`, set `env_config.renderer_name=qwen3_instruct` to skip autodetection.
+
+```bash
+# Whole-dataset classification DPO
+python scripts/Qwen_4B/dpo.py \
+   env_config.dpo_mode=classification \
+   env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
+   env_config.log_path=results/noveltyrank_dpo_qwen4b_classification \
+   env_config.wandb_name=DPO_qwen_4b_classification
+
+# Category-specific classification DPO (cs.CV)
+python scripts/Qwen_4B/dpo.py \
+   env_config.dpo_mode=classification \
+   env_config.category=cs.CV \
+   env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
+   env_config.log_path=results/noveltyrank_dpo_qwen4b_classification_cs_cv \
+   env_config.wandb_name=DPO_qwen_4b_classification_cs_cv
+
+# Category-specific comparison DPO (cs.CV)
+python scripts/Qwen_4B/dpo.py \
+   env_config.dpo_mode=comparison \
+   env_config.category=cs.CV \
+   env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
+   env_config.log_path=results/noveltyrank_dpo_qwen4b_comparison_cs_cv \
+   env_config.wandb_name=DPO_qwen_4b_comparison_cs_cv
+```
+
+All runs write checkpoints and W&B logs into the specified `log_path`. Use unique directories when launching multiple experiments in parallel.
 
 - **Description**
   - The script fine-tunes the Qwen/Qwen3-4B-Instruct-2507 on the NoveltyRank dataset using supervised learning with Tinker Cookbook.
@@ -139,3 +184,5 @@ python scripts/Sci_BERT/ft_scibert.py
 ```
 
 Trains SciBERT with text + embeddings + similarity features. Config options are at the top of the file.
+
+

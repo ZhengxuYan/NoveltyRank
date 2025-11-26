@@ -3,11 +3,12 @@ import sys
 import logging
 import random
 import asyncio
-from typing import Any, List, Tuple, Dict, Union, Optional
+from typing import List, Tuple, Dict, Optional
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 import chz
-from datasets import load_dataset, load_from_disk, Dataset as HFDataset
+import re
+from datasets import load_from_disk, Dataset as HFDataset
 
 # Add current path to sys.path to ensure tinker modules can be found
 sys.path.append(os.getcwd())
@@ -22,6 +23,14 @@ from tinker_cookbook.supervised.types import (
 )
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 
+from models.Qwen_4B.utils.pipelines import (
+    WHOLE_DATASET,
+    DEFAULT_TRAIN_CACHE_DIR,
+    DEFAULT_TEST_CACHE_DIR,
+    ensure_base_sft_splits,
+    ensure_category_resources,
+)
+
 logger = logging.getLogger(__name__)
 
 # Constants for mode selection
@@ -34,16 +43,6 @@ CLASSIFICATION_MODE = "classification"
 current_dir = os.path.dirname(os.path.abspath(__file__))
 # Assuming the structure involves going up two levels to find 'models'
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
-
-try:
-    from models.Qwen_4B.utils import (
-        clean_dataset,
-        generate_comparison_dpo_pairs,     # Ensure this matches your filename
-        generate_classification_dpo_pairs
-    )
-except ImportError as e:
-    logger.error("Failed to import helper functions. Please check your path structure.")
-    raise e
 
 # -----------------------------------------------------------------------------
 # Dataset Implementation
@@ -121,10 +120,11 @@ class NoveltyDPODataset(SupervisedDataset):
 # -----------------------------------------------------------------------------
 
 class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
-    def __init__(self, test_dataset: HFDataset, renderer_name: str, tokenizer_model_name: str, max_tokens: int):
+    def __init__(self, test_dataset: HFDataset, renderer_name: str, tokenizer_model_name: str, max_tokens: int, dpo_mode: str = COMPARISION_MODE):
         self.test_ds = test_dataset
         self.renderer = renderers.get_renderer(renderer_name, tokenizer=get_tokenizer(tokenizer_model_name))
         self.max_tokens = max_tokens
+        self.dpo_mode = dpo_mode
         
     async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
         prompts = [r["prompt_conversation"] for r in self.test_ds]
@@ -143,9 +143,37 @@ class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
             res = await asyncio.gather(*tasks)
             return [self.renderer.tokenizer.decode(r.sequences[0].tokens).strip() for r in res]
 
-        preds = await generate(sampling_client, prompts)
-        correct = sum(1 for p, t in zip(preds, ground_truths) if p.strip().replace("<|endoftext|>", "").replace(".","").upper() == t)
-        return {"test_accuracy": correct / len(preds) if preds else 0.0}
+        decoded = await generate(sampling_client, prompts)
+
+        # Branch behavior by mode: classification (0/1) vs comparison (A/B)
+        if self.dpo_mode == CLASSIFICATION_MODE:
+            # extract binary digits and compute precision/recall/F1
+            preds = [ (re.findall(r"[01]", d)[0] if re.findall(r"[01]", d) else "") for d in decoded ]
+
+            tp = sum(1 for p, t in zip(preds, ground_truths) if p == "1" and t == "1")
+            fp = sum(1 for p, t in zip(preds, ground_truths) if p == "1" and t == "0")
+            fn = sum(1 for p, t in zip(preds, ground_truths) if p == "0" and t == "1")
+            tn = sum(1 for p, t in zip(preds, ground_truths) if p == "0" and t == "0")
+            un_resolved = sum(1 for p in preds if p not in ["0", "1"])  # non-binary outputs
+
+            total = tp + fp + fn + tn + un_resolved
+            accuracy = (tp + tn) / total if total > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            F1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
+            return {
+                "test_accuracy": accuracy,
+                "test_precision": precision,
+                "test_recall": recall,
+                "test_F1": F1,
+            }
+        else:
+            # Comparison mode: expect 'A' or 'B' outputs. Only accuracy is meaningful.
+            preds = [ (re.findall(r"[AB]", d, flags=re.IGNORECASE)[0].upper() if re.findall(r"[AB]", d, flags=re.IGNORECASE) else "") for d in decoded ]
+            correct = sum(1 for p, t in zip(preds, ground_truths) if p == t)
+            accuracy = correct / len(preds) if preds else 0.0
+            return {"test_accuracy": accuracy}
     
 
 @chz.chz
@@ -158,36 +186,40 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
     # Mode selection
     dpo_mode: str = COMPARISION_MODE
 
-    # Cache paths
-    local_comparison_cache_path: str = "data_cache/test_dpo_pairs_comparison"
-    local_classification_cache_path: str = "data_cache/test_dpo_pairs_classification"
+    # Category configuration
+    category: str = WHOLE_DATASET
+    category_outdir: str = "data_cache"
+    category_seed: Optional[int] = None
+    train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR
+    test_cache_path: str = DEFAULT_TEST_CACHE_DIR
 
     def __call__(self) -> Evaluator:
-        # Determine paths and functions based on mode
-        if self.dpo_mode == CLASSIFICATION_MODE:
-            target_cache_path = self.local_classification_cache_path
-            gen_func = generate_classification_dpo_pairs
-            mode_name = "Classification (1/0)"
-        else:
-            target_cache_path = self.local_comparison_cache_path
-            gen_func = generate_comparison_dpo_pairs
-            mode_name = "Comparison (A/B)"
+        need_classification = self.dpo_mode == CLASSIFICATION_MODE
+        mode_name = "Classification (1/0)" if need_classification else "Comparison (A/B)"
+        train_split, test_split = ensure_base_sft_splits(
+            self.dataset_path,
+            train_cache_dir=self.train_cache_path,
+            test_cache_dir=self.test_cache_path,
+        )
+        paths = ensure_category_resources(
+            category=self.category,
+            dataset_path=self.dataset_path,
+            train_split=train_split,
+            test_split=test_split,
+            outdir=self.category_outdir,
+            seed=self.category_seed,
+            need_sft=True,
+            need_classification=need_classification,
+            need_comparison=not need_classification,
+        )
 
-        # Check if local cache exists
-        if os.path.exists(target_cache_path):
-            logger.info(f"Local test cache detected at {target_cache_path}. Loading from disk...")
-            test_dpo_pairs = load_from_disk(target_cache_path)
-        else:
-            logger.info(f"No local test cache found. Downloading from {self.dataset_path} and processing for {mode_name}...")
-            dataset = load_dataset(self.dataset_path)
-            test_raw = clean_dataset(dataset["test"], filter_year=False)
-            
-            logger.info(f"Generating {mode_name} test pairs...")
-            test_dpo_pairs = gen_func(test_raw)
-            
-            # Save to disk for next time
-            logger.info(f"Saving processed test pairs to {target_cache_path}...")
-            test_dpo_pairs.save_to_disk(target_cache_path)
+        target_cache_path = (
+            paths.test_classification if need_classification else paths.test_comparison
+        )
+        logger.info(
+            "Loading %s test cache from %s", "classification" if need_classification else "comparison", target_cache_path
+        )
+        test_dpo_pairs = load_from_disk(target_cache_path)
         
         # only take 1000 expamples for evaluation speed
         test_dpo_pairs = test_dpo_pairs.select(range(min(1000, len(test_dpo_pairs))))
@@ -197,7 +229,8 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
             test_dataset=test_dpo_pairs,
             renderer_name=self.renderer_name,
             tokenizer_model_name=self.model_name,
-            max_tokens=self.max_tokens
+            max_tokens=self.max_tokens,
+            dpo_mode=self.dpo_mode,
         )
 
 # -----------------------------------------------------------------------------
@@ -212,36 +245,41 @@ class NoveltyRankDatasetLoader(ChatDatasetBuilder):
     # Mode selection
     dpo_mode: str = COMPARISION_MODE # or CLASSIFICATION_MODE
 
-    # Local cache configurations
-    local_comparison_cache_path: str = "data_cache/train_dpo_pairs_comparison"
-    local_classification_cache_path: str = "data_cache/train_dpo_pairs_classification"
+    # Category configuration
+    category: str = WHOLE_DATASET
+    category_outdir: str = "data_cache"
+    category_seed: Optional[int] = None
+    train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR
+    test_cache_path: str = DEFAULT_TEST_CACHE_DIR
 
     def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
-        # Determine paths and functions based on mode
-        if self.dpo_mode == CLASSIFICATION_MODE:
-            target_cache_path = self.local_classification_cache_path
-            gen_func = generate_classification_dpo_pairs
-            mode_name = "Classification (1/0)"
-        else:
-            target_cache_path = self.local_comparison_cache_path
-            gen_func = generate_comparison_dpo_pairs
-            mode_name = "Comparison (A/B)"
-
-        # Check if local cache exists
-        if os.path.exists(target_cache_path):
-            logger.info(f"Local train cache detected at {target_cache_path}. Loading from disk...")
-            train_dpo_pairs = load_from_disk(target_cache_path)
-        else:
-            logger.info(f"No local train cache found. Downloading from {self.dataset_path} and processing for {mode_name}...")
-            dataset = load_dataset(self.dataset_path)
-            train_raw = clean_dataset(dataset["train"], filter_year=True)
-            
-            logger.info(f"Generating {mode_name} DPO pairs...")
-            train_dpo_pairs = gen_func(train_raw)
-            
-            # Save to disk for next time
-            logger.info(f"Saving processed train pairs to {target_cache_path}...")
-            train_dpo_pairs.save_to_disk(target_cache_path)
+        need_classification = self.dpo_mode == CLASSIFICATION_MODE
+        mode_name = "Classification (1/0)" if need_classification else "Comparison (A/B)"
+        train_split, test_split = ensure_base_sft_splits(
+            self.dataset_path,
+            train_cache_dir=self.train_cache_path,
+            test_cache_dir=self.test_cache_path,
+        )
+        paths = ensure_category_resources(
+            category=self.category,
+            dataset_path=self.dataset_path,
+            train_split=train_split,
+            test_split=test_split,
+            outdir=self.category_outdir,
+            seed=self.category_seed,
+            need_sft=True,
+            need_classification=need_classification,
+            need_comparison=not need_classification,
+        )
+        target_cache_path = (
+            paths.train_classification if need_classification else paths.train_comparison
+        )
+        logger.info(
+            "Loading %s train cache from %s",
+            "classification" if need_classification else "comparison",
+            target_cache_path,
+        )
+        train_dpo_pairs = load_from_disk(target_cache_path)
 
         logger.info(f"Loaded {len(train_dpo_pairs)} DPO examples ({mode_name}) for training.")
 

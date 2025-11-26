@@ -15,6 +15,9 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 # Import our custom dataset loader
 from models.Qwen_4B.dpo_env import NoveltyRankDatasetLoader, NoveltyRankEvaluatorBuilder, CLASSIFICATION_MODE, COMPARISION_MODE
+from models.Qwen_4B.utils.pipelines import WHOLE_DATASET, CS_RO, CS_CV
+
+_KNOWN_DPO_CATEGORIES = (WHOLE_DATASET, CS_RO, CS_CV)
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)
@@ -42,7 +45,7 @@ class NoveltyDPOConfig:
     # Training Hyperparameters
     learning_rate: float = 5e-6
     batch_size: int = 64
-    num_epochs: int = 5
+    num_epochs: int = 10
     dpo_beta: float = 0.1
     lora_rank: int = 32
     
@@ -52,6 +55,9 @@ class NoveltyDPOConfig:
     
     # DPO Mode Selection: "comparison" (Pairwise A/B) or "classification" (Pointwise 1/0)
     dpo_mode: str = CURRENT_MODE
+    category: str = WHOLE_DATASET
+    category_outdir: str = "data_cache"
+    category_seed: Optional[int] = None
 
     # Infrastructure
     base_url: Optional[str] = None  # For local/remote service URL
@@ -87,7 +93,10 @@ def main(env_config: NoveltyDPOConfig):
     dataset_builder = NoveltyRankDatasetLoader(
         common_config=common_ds_config,
         dataset_path=dataset_path,
-        dpo_mode=env_config.dpo_mode  # Pass the selected mode to the loader
+        dpo_mode=env_config.dpo_mode,
+        category=env_config.category,
+        category_outdir=env_config.category_outdir,
+        category_seed=env_config.category_seed,
     )
 
     # 4. Initialize Evaluator Builder
@@ -95,7 +104,10 @@ def main(env_config: NoveltyDPOConfig):
         dataset_path=dataset_path,
         renderer_name=renderer_name,
         model_name=env_config.model_name,
-        dpo_mode=env_config.dpo_mode  # Pass the selected mode to the evaluator
+        dpo_mode=env_config.dpo_mode,
+        category=env_config.category,
+        category_outdir=env_config.category_outdir,
+        category_seed=env_config.category_seed,
     )
 
     # 5. Construct the Main DPO Training Configuration

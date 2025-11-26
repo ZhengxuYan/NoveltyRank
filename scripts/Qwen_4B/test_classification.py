@@ -79,7 +79,7 @@ async def process_one(data, sampler):
 async def main():
     # --- Configuration ---
     dataset_path = "JasonYan777/novelty-rank-with-similarities"
-    local_cache_path = "data_cache/test_sft_data"
+    local_cache_path = "data_cache/test_sft_data/test_split_cleaned"
     
     # --- Data Loading with Caching Feature ---
     
