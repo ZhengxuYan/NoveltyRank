@@ -24,7 +24,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # Assuming the structure involves going up two levels to find 'models'
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 # Assuming clean_dataset is available from this utility path
-from models.Qwen_4B.utils import clean_dataset, generate_prompts_and_labels
+from models.Qwen_4B.utils import clean_dataset, generate_prompts_and_labels, _balance_dataset_by_upsampling
 
 # Configure basic logging
 logger = logging.getLogger(__name__)
@@ -176,6 +176,7 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
     local_cache_path: str = chz.field(
         default="data_cache/train_sft_data",
     )
+    balance_dataset: bool = True
 
     def __call__(self):
         
@@ -202,6 +203,9 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
             
             train_ds = cleaned_train_ds
         # ------------------------------------------------------------------
+
+        if self.balance_dataset:
+            train_ds = _balance_dataset_by_upsampling(train_ds)
 
         sft_renderer = SFTChatRenderer(self.renderer)
 

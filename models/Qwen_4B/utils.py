@@ -343,16 +343,11 @@ def generate_prompts_and_labels(example: dict[str, str]) -> list[dict[str, str]]
 
 from datasets import Dataset, concatenate_datasets
 
-def generate_classification_dpo_pairs(dataset: Dataset) -> Dataset:
+
+def _balance_dataset_by_upsampling(dataset: Dataset) -> Dataset:
     """
-    Generates Balanced DPO pairs for a Single-Paper Classification task.
-    
-    Upsampling Strategy:
-    Since Negative examples (0) are always the majority, this function 
-    duplicates the Positive examples (1) to match the count of Negative examples.
+    Balances a dataset by upsampling the minority class (assumed to be '1').
     """
-    
-    # 1. Separate by label
     pos_ds = dataset.filter(lambda x: str(x.get('label')) == "1")
     neg_ds = dataset.filter(lambda x: str(x.get('label')) == "0")
     
@@ -361,38 +356,37 @@ def generate_classification_dpo_pairs(dataset: Dataset) -> Dataset:
     
     logger.info(f"Class Distribution - Positive: {n_pos}, Negative: {n_neg}")
 
-    if n_pos == 0:
-        logger.warning("No positive samples found. Returning empty dataset.")
-        return Dataset.from_list([])
+    if n_pos == 0 or n_pos >= n_neg:
+        logger.info("No upsampling needed or no positive samples found.")
+        return dataset
 
-    # 2. Upsample Positive to match Negative count
-    # We assume n_neg > n_pos based on your requirement
-    target_count = n_neg
-
-    if n_pos < target_count:
-        logger.info(f"Upsampling Positive class from {n_pos} to {target_count}...")
-        
-        repeat_times = target_count // n_pos
-        remainder = target_count % n_pos
-        
-        datasets_to_concat = [pos_ds] * repeat_times
-        
-        # Fill the remainder gap
-        if remainder > 0:
-            datasets_to_concat.append(pos_ds.select(range(remainder)))
-            
-        pos_ds = concatenate_datasets(datasets_to_concat)
-
-    # 3. Merge and Shuffle
-    # Now pos_ds length equals neg_ds length
-    balanced_dataset = concatenate_datasets([pos_ds, neg_ds])
-    balanced_dataset = balanced_dataset.shuffle(seed=42)
+    logger.info(f"Upsampling Positive class from {n_pos} to match Negative class {n_neg}...")
     
-    logger.info(f"Final Balanced Dataset Size: {len(balanced_dataset)} (Balanced 1:1)")
+    repeat_times = n_neg // n_pos
+    remainder = n_neg % n_pos
+    
+    datasets_to_concat = [pos_ds] * repeat_times
+    if remainder > 0:
+        datasets_to_concat.append(pos_ds.select(range(remainder)))
+        
+    upsampled_pos_ds = concatenate_datasets(datasets_to_concat)
+    
+    balanced_dataset = concatenate_datasets([upsampled_pos_ds, neg_ds]).shuffle(seed=42)
+    
+    logger.info(f"Final Balanced Dataset Size: {len(balanced_dataset)}")
+    return balanced_dataset
 
-    # 4. Map to DPO format
+
+def generate_classification_dpo_pairs(dataset: Dataset) -> Dataset:
+    """
+    Generates Balanced DPO pairs for a Single-Paper Classification task.
+    It upsamples the positive examples to match the count of negative examples.
+    """
+    # 1. Balance the dataset
+    balanced_dataset = _balance_dataset_by_upsampling(dataset)
+    
+    # 2. Map to DPO format
     original_cols = balanced_dataset.column_names
-    
     dpo_dataset = balanced_dataset.map(
         create_classification_example,
         remove_columns=original_cols,
