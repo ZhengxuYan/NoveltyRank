@@ -85,8 +85,24 @@ async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--category", type=str, default="WHOLE_DATASET",
                         help="Data category to build DPO pairs for (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
+    parser.add_argument("--model-name", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
+                        help="Base model name registered with Tinker")
+    parser.add_argument("--model-path", type=str,
+                        default="tinker://c2cf9723-af77-5458-9032-a7f5b10b20da:train:0/sampler_weights/final",
+                        help="Tinker checkpoint URI (tinker://...) for sampling; leave empty for base model")
+    parser.add_argument("--temperature", type=float, default=0.0,
+                        help="Sampling temperature")
+    parser.add_argument("--max-tokens", type=int, default=10,
+                        help="Maximum tokens to sample per response")
+    parser.add_argument("--limit", type=int, default=100,
+                        help="Number of comparison examples to evaluate")
     args = parser.parse_args()
     category = args.category
+    model_name = args.model_name
+    model_path = args.model_path or None
+    temperature = args.temperature
+    max_tokens = args.max_tokens
+    dataset_limit = max(1, args.limit)
 
     local_sft_cache_path = "data_cache/test_sft_data/test_split_cleaned"
     local_dpo_cache_path = "data_cache/test_dpo_pairs_comparison"
@@ -127,20 +143,19 @@ async def main():
 
     # --- End of main function logic ---
     print(f"Successfully loaded DPO comparison dataset of size: {len(dataset)}")
-    dataset = dataset.select(range(min(1000, len(dataset))))  # Limit to 1000 samples or less
+    dataset = dataset.shuffle(seed=42)
+    dataset = dataset.select(range(min(dataset_limit, len(dataset))))
 
     # Initialize sampler
-    temperature=0.0
-    model_name="Qwen/Qwen3-4B-Instruct-2507"
-    model_path="tinker://c2cf9723-af77-5458-9032-a7f5b10b20da:train:0/sampler_weights/final"
     print("-------- Initializing sampler -------")
     print(f"Model Name: {model_name}")
     print(f"Model Path: {model_path}")
     print(f"Temperature: {temperature}")
+    print(f"Max Tokens: {max_tokens}")
     print("-------- Sampler initialized -------")
     sampler = TinkerSampler(model_name=model_name,
                             model_path=model_path,
-                            temperature=temperature, max_tokens=512)
+                            temperature=temperature, max_tokens=max_tokens)
 
     # asyncio generate predictions
     results = await asyncio.gather(*[process_one(data, sampler) for data in dataset])

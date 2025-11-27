@@ -123,7 +123,6 @@ Outputs include top-10 similar papers with scores for each paper in the dataset.
 python scripts/Qwen_4B/sft.py
 ```
 
-> The training CLIs are powered by `chz`, so override arguments with `key=value` syntax.
 
 Common invocations:
 
@@ -141,7 +140,6 @@ If you want to customize hyperparameters, you can modify the `build_config` func
 `scripts/Qwen_4B/sft.py`.
 
 #### Qwen3-4B DPO Training
-
 Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypoint. When using a Tinker checkpoint URI for `model_name`, set `env_config.renderer_name=qwen3_instruct` to skip autodetection.
 
 ```bash
@@ -149,7 +147,6 @@ Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypo
 python scripts/Qwen_4B/dpo.py \
    env_config.dpo_mode=classification \
    env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
-   env_config.log_path=results/noveltyrank_dpo_qwen4b_classification \
    env_config.wandb_name=DPO_qwen_4b_classification
 
 # Category-specific classification DPO (cs.CV)
@@ -174,6 +171,32 @@ All runs write checkpoints and W&B logs into the specified `log_path`. Use uniqu
 - **Description**
   - The script fine-tunes the Qwen/Qwen3-4B-Instruct-2507 on the NoveltyRank dataset using supervised learning with Tinker Cookbook.
   - Tinker Cookbook is used for data loading, model training, and evaluation, without worrying about low-level details(e.g., distributed training, mixed precision, etc.).
+
+#### Qwen3-4B Evaluations
+
+Quickly sanity-check the latest checkpoints with the lightweight evaluation scripts:
+
+```bash
+# Classification accuracy on cs.CV split
+python scripts/Qwen_4B/test_classification.py \
+   --category CS_CV \
+   --model-name Qwen/Qwen3-4B-Instruct-2507 \
+   --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final \
+   --temperature 0.0
+
+# Pairwise comparison accuracy on cs.CV split
+python scripts/Qwen_4B/test_comparison.py \
+   --category CS_CV \
+   --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final
+```
+
+Key flags:
+- `--category`: Chooses a category-specific cache if present; defaults to the full dataset cache.
+- `--model-name`: Base model registered with Tinker (defaults to the production Qwen3-4B checkpoint).
+- `--model-path`: Tinker checkpoint URI (defaults to the reference fine-tune in this repo). Pass an empty string to fall back to the base model.
+- `--temperature`: Sampling temperature (default `0.0` for deterministic decoding).
+- `--max-tokens`: Maximum generated tokens (`10` for classification, `512` for comparison).
+- `--limit`: Caps the number of evaluation examples (useful for quick smoke tests).
 
 #### SciBERT Multimodal Training
 
