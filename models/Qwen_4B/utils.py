@@ -218,55 +218,20 @@ def create_classification_example(paper: Dict) -> Dict:
     Task: Is this paper novel? (Label 1) or Not (Label 0).
     """
     
-    # Reuse your existing helper to format the paper text
-    paper_block = format_paper_block(
-        paper.get("Title", ""), 
-        paper.get("Authors", ""), 
-        paper.get("Abstract", ""),
-        paper["max_similarity"], 
-        paper["avg_similarity"]
-    )
+    # Use the shared SFT prompt generator to avoid duplication
+    user_prompt, label = create_sft_example(paper)
 
-    # Define the Prompt for the classification task
-    prompt_content = f"""
-You are an expert AI researcher and senior conference reviewer.
-Your task is to classify the **conceptual novelty** of the following research paper.
+    chosen_response = label if str(label) in ("0", "1") else "0"
+    rejected_response = "1" if chosen_response == "0" else "0"
 
----
-### Paper Details
-{paper_block}
-
----
-### Task
-Determine if this paper represents a novel contribution (Label 1) or a conventional/incremental work (Label 0).
-
-Output '1' if the paper is Novel.
-Output '0' if the paper is Not Novel.
-
-Output only the number.
-"""
-
-    # Logic: Determine Chosen vs Rejected based on the dataset label
-    # Assuming label is stored as "1" or "0" (string or int)
-    label = str(paper.get('label', '0'))
-
-    if label == "1":
-        # If true label is Novel (1)
-        chosen_response = "1"
-        rejected_response = "0"
-    else:
-        # If true label is Not Novel (0)
-        chosen_response = "0"
-        rejected_response = "1"
-    
     return {
-        "prompt_conversation": [{"role": "user", "content": prompt_content}],
+        "prompt_conversation": [{"role": "user", "content": user_prompt}],
         "chosen": [{"role": "assistant", "content": chosen_response}],
         "rejected": [{"role": "assistant", "content": rejected_response}],
     }
 
 
-def generate_prompts_and_labels(example: dict[str, str]) -> list[dict[str, str]]:
+def create_sft_example(example: dict[str, str]) -> list[dict[str, str]]:
     """
     Generates the full multi-turn prompt (including few-shot examples and reasoning steps)
     and the ground truth label from a single paper example.

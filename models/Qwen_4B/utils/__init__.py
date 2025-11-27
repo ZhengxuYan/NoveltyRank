@@ -107,48 +107,46 @@ def create_comparison_example(novel_paper: Dict, random_paper: Dict) -> Dict:
         paper_b_block = novel_text
         chosen_response = "B"
         rejected_response = "A"
-
+    # CV-focused prompt: emphasize vision-specific novelty dimensions and provide CV few-shots
     prompt_content = f"""
-You are an expert AI researcher and senior conference reviewer (NeurIPS/ICLR level). 
-Your goal is to compare the **conceptual novelty** of two research papers, not just their surface similarity.
+You are an expert computer-vision researcher and senior conference reviewer (CVPR/ICCV/NeurIPS level).
+Your goal is to compare the *conceptual novelty* of two computer-vision research papers (not just surface/benchmark improvements).
 
 ---
-### What is Conceptual Novelty?
-Conceptual novelty is not just about being different; it's about introducing a fundamental shift in thinking. Consider these dimensions:
--   **Problem Formulation:** Does the paper define a new problem or re-frame an existing one in a completely new way?
--   **Methodological Innovation:** Does it propose a new class of models, algorithms, or frameworks (e.g., Attention, GANs, Diffusion Models)? This is more than just tweaking an existing architecture.
--   **Theoretical Insight:** Does it provide a new theoretical understanding that unifies disparate concepts or explains a phenomenon in a new light?
--   **Cross-Disciplinary Application:** Does it successfully import a concept from another field, creating a new line of inquiry (e.g., applying concepts from physics to machine learning)?
+What counts as Conceptual Novelty in Computer Vision?
+- Problem formulation: introduces a new problem or reframes a visual task (e.g., novel 3D reconstruction objective, new cross-modal alignment task).
+- Methodological innovation: proposes a new class of models or training paradigms for visual data (e.g., transformer architectures adapted to image patches, implicit neural representations like NeRF, diffusion for image synthesis).
+- Representation or inductive bias: introduces a new way to represent visual content (e.g., continuous scene representations, equivariant networks, geometric priors).
+- Evaluation / benchmarking shift: defines a fundamentally different evaluation protocol that reveals new capabilities (not just adding another dataset split).
+- Cross-modal or cross-disciplinary transfer that opens new research directions (e.g., physics-informed rendering for vision, neuro-inspired perceptual priors).
 
-Incremental work, such as hyperparameter tuning, minor architectural tweaks, or applying a known method to a new dataset without significant adaptation, is **not** considered conceptually novel.
-
----
-### Step-by-step Reasoning Guide:
-1.  **Understand** each paper's core contribution from its title and abstract.
-2.  **Synthesize** the provided similarity scores. High similarity might suggest incremental work, but isn't conclusive. A truly novel idea might still build on existing concepts.
-3.  **Evaluate** each paper's potential for a *paradigm shift* based on the definition of novelty above.
-4.  **Compare** them directly. Even if both are good, one might be more foundational or conceptually deeper than the other.
-5.  **Decide** which paper, A or B, is more conceptually novel and output only the corresponding letter.
+Incremental contributions (e.g., slightly higher ImageNet accuracy, simple augmentation tweaks, hyperparameter tuning, or re-running existing methods on another dataset) are NOT considered conceptually novel.
 
 ---
-### Few-shot Examples
+Step-by-step reasoning (use these as your guide and mention the strongest signal):
+1) Extract the core technical idea from each paper's title and abstract.
+2) Check whether the idea represents a new task, representation, learning paradigm, or major architectural shift.
+3) Use similarity metrics as supportive evidence (high similarity tilts toward incremental), but prioritize conceptual signals (new objective, representation, or theory).
+4) Choose which paper is more conceptually novel; answer only with 'A' or 'B'.
 
-**Example 1:**
-*   **Paper A:** Introduces the Transformer architecture, replacing recurrence with self-attention. (Max sim: 0.68, Avg sim: 0.55)
-*   **Paper B:** Modifies BERT with small regularization tweaks for better stability. (Max sim: 0.91, Avg sim: 0.82)
-*   **Reasoning:** Paper A introduces a new architectural paradigm (Methodological Innovation), while B is an incremental improvement.
-*   **Output:** A
+--- EXAMPLES (computer-vision focused)
+Example 1:
+Paper A: Introduces Vision Transformer (ViT) — treats images as a sequence of patches and applies a pure transformer backbone, changing core architecture for vision.
+Paper B: Reports small regularization and augmentation tweaks to ResNet training that marginally improve accuracy.
+Reasoning: A introduces a new architectural paradigm for visual representation -> Novel.
+Output: A
 
-**Example 2:**
-*   **Paper A:** Proposes a new method for image generation using Variational Autoencoders with a novel divergence metric. (Max sim: 0.75, Avg sim: 0.65)
-*   **Paper B:** Introduces Generative Adversarial Networks (GANs), a new framework where two neural networks contest with each other. (Max sim: 0.70, Avg sim: 0.60)
-*   **Reasoning:** While both are generative models, GANs introduced a fundamentally new and highly influential adversarial training paradigm (Methodological Innovation).
-*   **Output:** B
+Example 2:
+Paper A: Proposes Neural Radiance Fields (NeRF) — an implicit continuous 3D scene representation enabling view synthesis.
+Paper B: Improves an existing multi-view stereo pipeline with a better post-processing filter.
+Reasoning: NeRF introduces a fundamentally new representation and rendering paradigm -> Novel.
+Output: A
 
----
-### Your Task
-
-Compare the following two papers and identify which one demonstrates higher conceptual novelty.
+Example 3:
+Paper A: Applies an off-the-shelf transformer to a small medical imaging dataset with minor changes.
+Paper B: Proposes a new contrastive objective that aligns multi-resolution feature maps and demonstrates broad transfer across many vision tasks.
+Reasoning: B defines a new learning objective with broad implications -> Novel.
+Output: B
 
 ---
 ### Paper A
@@ -159,9 +157,7 @@ Compare the following two papers and identify which one demonstrates higher conc
 {paper_b_block}
 
 ---
-### Final Output
-Which paper is more novel? Output 'A' or 'B'.
-Output only the letter.
+Output only the single letter 'A' or 'B'.
 """
     
     return {
@@ -212,127 +208,71 @@ def create_classification_example(paper: Dict) -> Dict:
     Task: Is this paper novel? (Label 1) or Not (Label 0).
     """
     
-    # Reuse your existing helper to format the paper text
-    paper_block = format_paper_block(
-        paper.get("Title", ""), 
-        paper.get("Authors", ""), 
-        paper.get("Abstract", ""),
-        paper["max_similarity"], 
-        paper["avg_similarity"]
-    )
+    # Build the user prompt and get the canonical label using the shared prompt generator
+    user_prompt, label = create_sft_example(paper)
 
-    # Define the Prompt for the classification task
-    prompt_content = f"""
-You are an expert AI researcher and senior conference reviewer.
-Your task is to classify the **conceptual novelty** of the following research paper.
+    # Ensure label is canonical '0' or '1'
+    chosen_response = label if str(label) in ("0", "1") else "0"
+    rejected_response = "1" if chosen_response == "0" else "0"
 
----
-### Paper Details
-{paper_block}
-
----
-### Task
-Determine if this paper represents a novel contribution (Label 1) or a conventional/incremental work (Label 0).
-
-Output '1' if the paper is Novel.
-Output '0' if the paper is Not Novel.
-
-Output only the number.
-"""
-
-    # Logic: Determine Chosen vs Rejected based on the dataset label
-    # Assuming label is stored as "1" or "0" (string or int)
-    label = str(paper.get('label', '0'))
-
-    if label == "1":
-        # If true label is Novel (1)
-        chosen_response = "1"
-        rejected_response = "0"
-    else:
-        # If true label is Not Novel (0)
-        chosen_response = "0"
-        rejected_response = "1"
-    
     return {
-        "prompt_conversation": [{"role": "user", "content": prompt_content}],
+        "prompt_conversation": [{"role": "user", "content": user_prompt}],
         "chosen": [{"role": "assistant", "content": chosen_response}],
         "rejected": [{"role": "assistant", "content": rejected_response}],
     }
 
 
-def generate_prompts_and_labels(example: dict[str, str]) -> list[dict[str, str]]:
+def create_sft_example(example: dict[str, str]) -> tuple[str, str]:
     """
-    Generates the full multi-turn prompt (including few-shot examples and reasoning steps)
-    and the ground truth label from a single paper example.
+    Generate a single-turn classification prompt (user-facing) using a structured,
+    prompt-engineered template and return the canonical label as a string.
+
+    Keeps the same return signature `(user_prompt, label)` used by other callers.
     """
     title = example.get("Title", "")
     authors = example.get("Authors", "")
     abstract = example.get("Abstract", "")
     max_sim = example.get("max_similarity", "N/A")
-    avg_sim = example.get("average_similarity", "N/A")
-    label = example.get("label", "")
-    
-    # generate user prompt
-    user_prompt = f"""
-            You are an expert AI researcher and senior conference reviewer (NeurIPS/ICLR level). 
-            Your goal is to **assess the conceptual novelty** of a new research paper.
+    avg_sim = example.get("avg_similarity", "N/A")
+    label = str(example.get("label", ""))
 
-            ---
-            ### What is Conceptual Novelty?
-            Conceptual novelty is not just about being different; it's about introducing a fundamental shift in thinking. Consider these dimensions:
-            -   **Problem Formulation:** Does the paper define a new problem or re-frame an existing one in a completely new way?
-            -   **Methodological Innovation:** Does it propose a new class of models, algorithms, or frameworks (e.g., Attention, GANs, Diffusion Models)? This is more than just tweaking an existing architecture.
-            -   **Theoretical Insight:** Does it provide a new theoretical understanding that unifies disparate concepts or explains a phenomenon in a new light?
-            -   **Cross-Disciplinary Application:** Does it successfully import a concept from another field, creating a new line of inquiry (e.g., applying concepts from physics to machine learning)?
+    # CV-focused SFT prompt: concise instruction + CV rubric + targeted few-shot examples
+    definition = (
+        "You are an expert computer-vision researcher and senior reviewer (CVPR/ICCV/NeurIPS level)."
+        " Assess whether the paper demonstrates *conceptual novelty* in computer vision."
+    )
 
-            Incremental work, such as hyperparameter tuning, minor architectural tweaks, or applying a known method to a new dataset without significant adaptation, is **not** considered conceptually novel.
-            
-            ---
-            ### Step-by-step reasoning:
-            1. **Understand** the paper’s main idea, contribution, and context from its title and abstract.
-            2. **Compare** it conceptually against prior literature (based on the given similarity metrics).
-            3. **Evaluate** whether the paper represents a conceptually novel contribution based on the definition above.
-            4. **Predict** whether this project is likely to have *high influence* or *define a new paradigm*.
-            5. Finally, output a binary decision:
-               - Output `'1'` if the paper is conceptually novel and likely to influence future research,
-               - Output `'0'` otherwise.
-            
-            ---
-            ### Input
-            Title: {title}
-            Authors: {authors}
-            Abstract: {abstract}
-            Max similarity to prior work: {max_sim}
-            Average similarity to prior work: {avg_sim}
-            
-            ---
-            ### Few-shot Examples
-            
-            **Example 1**
-            Title: "Attention Is All You Need"
-            Abstract: Introduces the Transformer architecture, replacing recurrence with attention mechanisms for sequence modeling.
-            Max similarity: 0.68 | Avg similarity: 0.55  
-            **Reasoning:** This paper introduced a new architectural paradigm (Methodological Innovation).
-            **Output:** 1
-            
-            **Example 2**
-            Title: "A Slightly Improved BERT Model with Layer-wise Dropout"
-            Abstract: Modifies BERT with small regularization tweaks and hyperparameter tuning for better stability.
-            Max similarity: 0.91 | Avg similarity: 0.82  
-            **Reasoning:** Highly similar to prior work and lacks new conceptual insights. This is incremental.
-            **Output:** 0
-            
-            **Example 3**
-            Title: "Aligning LLMs with Value-Constrained Reinforcement Learning"
-            Abstract: Proposes a reinforcement learning approach with explicit value constraints to align LLM behavior.
-            Max similarity: 0.73 | Avg similarity: 0.64  
-            **Reasoning:** Builds on known RLHF methods but introduces a novel constrained optimization view (Problem Formulation). Moderately novel.
-            **Output:** 1
-            
-            ---
-            Now, reason through the given paper step by step and output only '1' or '0'.
-            """
-    return (user_prompt, str(label))
+    rubric = (
+        "Focus on whether the paper introduces:"
+        "\n- A new problem or task formulation in vision"
+        "\n- A new representation or inductive bias (e.g., implicit 3D, equivariant features)"
+        "\n- A new learning objective or paradigm with broad applicability"
+        "\n- A major architectural shift tailored for visual data"
+        "\nDo NOT label small engineering gains or dataset re-runs as novel."
+    )
+
+    instructions = (
+        "Read the Title and Abstract, reason about conceptual novelty using the rubric,"
+        " and then output a single digit: '1' = Novel, '0' = Not Novel. Output only the digit."
+    )
+
+    input_block = (
+        f"Title: {title}\nAuthors: {authors}\nAbstract: {abstract}\n"
+        f"Max similarity to prior work: {max_sim}\nAverage similarity to prior work: {avg_sim}"
+    )
+
+    few_shot = (
+        "Example 1:\nTitle: Vision Transformer (ViT)\nAbstract: Treats image as patch tokens and applies transformer backbones to images.\n"
+        "Max similarity: 0.68 | Avg similarity: 0.55\nReasoning: New architectural paradigm for images -> Novel.\nOutput: 1\n\n"
+        "Example 2:\nTitle: Improved ResNet Training via Extra Augmentation\nAbstract: Adds specific augmentations and hyperparameter tuning to improve benchmark scores.\n"
+        "Max similarity: 0.91 | Avg similarity: 0.82\nReasoning: Engineering-level improvements without conceptual shift -> Not Novel.\nOutput: 0\n\n"
+        "Example 3:\nTitle: Neural Radiance Fields (NeRF) for View Synthesis\nAbstract: Learns continuous volumetric scene representations enabling novel-view synthesis.\n"
+        "Max similarity: 0.72 | Avg similarity: 0.60\nReasoning: Introduces a new representation/learning paradigm -> Novel.\nOutput: 1"
+    )
+
+    user_prompt = "\n\n".join([definition, rubric, instructions, "--- INPUT ---", input_block, "--- EXAMPLES ---", few_shot])
+
+    return (user_prompt, label)
         
 
 from datasets import Dataset, concatenate_datasets

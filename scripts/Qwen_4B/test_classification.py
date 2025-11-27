@@ -4,8 +4,9 @@ Initialize model samplers and handle prompt construction logic.
 """
 import os
 import sys
+import argparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from models.Qwen_4B.sft_env import generate_prompts_and_labels, clean_dataset
+from models.Qwen_4B.sft_env import create_sft_example, clean_dataset
 import asyncio
 from datasets import Dataset, load_dataset, load_from_disk
 
@@ -65,7 +66,7 @@ class TinkerSampler():
         return response_message
     
 async def process_one(data, sampler):
-    user_prompt, label = generate_prompts_and_labels(data)
+    user_prompt, label = create_sft_example(data)
     messages = [
         renderers.Message(role="user", content=user_prompt)
     ]
@@ -79,7 +80,18 @@ async def process_one(data, sampler):
 async def main():
     # --- Configuration ---
     dataset_path = "JasonYan777/novelty-rank-with-similarities"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--category", type=str, default="WHOLE_DATASET",
+                        help="Data category to evaluate (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
+    args = parser.parse_args()
+
+    category = args.category
+
     local_cache_path = "data_cache/test_sft_data/test_split_cleaned"
+    # If a category-specific cleaned SFT split exists, prefer it
+    category_sft_path = f"data_cache/categories/{category}/sft/test"
+    if os.path.exists(category_sft_path):
+        local_cache_path = category_sft_path
     
     # --- Data Loading with Caching Feature ---
     
@@ -105,12 +117,22 @@ async def main():
 
     # --- End of main function logic ---
     print(f"Successfully loaded and cleaned dataset of size: {len(dataset)}")
-    dataset = dataset.select(range(min(1000, len(dataset))))  # Limit to 1000 samples or less
+    # shuffle and limit dataset size for testing
+    dataset = dataset.shuffle(seed=42)
+    dataset = dataset.select(range(min(500, len(dataset))))  # Limit to 500 samples or less
 
     # Initialize sampler
-    sampler = TinkerSampler(model_name="Qwen/Qwen3-4B-Instruct-2507",
-                            model_path="tinker://90ce9e55-9e89-4976-878b-c7f474fe92c0/sampler_weights/final",
-                            temperature=0.0, max_tokens=512)
+    temperature=0.0
+    model_name="Qwen/Qwen3-4B-Instruct-2507"
+    model_path="tinker://c2cf9723-af77-5458-9032-a7f5b10b20da:train:0/sampler_weights/final"
+    print("-------- Initializing sampler -------")
+    print(f"Model Name: {model_name}")
+    print(f"Model Path: {model_path}")
+    print(f"Temperature: {temperature}")
+    print("-------- Sampler initialized -------")
+    sampler = TinkerSampler(model_name=model_name,
+                            model_path=model_path,
+                            temperature=temperature, max_tokens=10)
 
     # asyncio generate predictions
     results = await asyncio.gather(*[process_one(data, sampler) for data in dataset])

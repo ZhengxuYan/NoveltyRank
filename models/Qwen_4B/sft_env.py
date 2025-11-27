@@ -23,7 +23,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 # Assuming the structure involves going up two levels to find 'models'
 sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
 # Assuming clean_dataset is available from this utility path
-from models.Qwen_4B.utils import clean_dataset, generate_prompts_and_labels, _balance_dataset_by_upsampling
+from models.Qwen_4B.utils import clean_dataset, create_sft_example, _balance_dataset_by_upsampling
 from models.Qwen_4B.utils.pipelines import (
     WHOLE_DATASET,
     DEFAULT_TRAIN_CACHE_DIR,
@@ -142,8 +142,8 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         prompts = []
         labels = []
         for ex in self.test_data:
-            # generate_prompts_and_labels is defined below
-            user_prompts, user_labels = generate_prompts_and_labels(ex) 
+            # create_sft_example generates the prompt and canonical label
+            user_prompts, user_labels = create_sft_example(ex)
             prompts.append(user_prompts)
             labels.append(user_labels)
 
@@ -247,7 +247,7 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
 
         # define function to convert each example to Datums
         def example_to_datum(example: dict[str, str]) -> list[types.Datum]:
-            user_prompt, label = generate_prompts_and_labels(example)
+            user_prompt, label = create_sft_example(example)
 
             # convert to conversation format
             conversation = [

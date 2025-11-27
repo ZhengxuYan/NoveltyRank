@@ -4,6 +4,7 @@ Initialize model samplers and handle prompt construction logic for comparison ta
 """
 import os
 import sys
+import argparse
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 from models.Qwen_4B.utils import clean_dataset, generate_comparison_dpo_pairs
 import asyncio
@@ -81,8 +82,22 @@ async def process_one(data, sampler):
 async def main():
     # --- Configuration ---
     dataset_path = "JasonYan777/novelty-rank-with-similarities"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--category", type=str, default="WHOLE_DATASET",
+                        help="Data category to build DPO pairs for (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
+    args = parser.parse_args()
+    category = args.category
+
     local_sft_cache_path = "data_cache/test_sft_data/test_split_cleaned"
     local_dpo_cache_path = "data_cache/test_dpo_pairs_comparison"
+
+    # Paths for category-specific caches
+    category_sft_path = f"data_cache/categories/{category}/sft/test"
+    category_dpo_path = f"data_cache/categories/{category}/dpo/comparison/test"
+    if os.path.exists(category_dpo_path):
+        local_dpo_cache_path = category_dpo_path
+    elif os.path.exists(category_sft_path):
+        local_sft_cache_path = category_sft_path
     
     # --- Data Loading with Caching Feature ---
     if os.path.exists(local_dpo_cache_path):
@@ -105,17 +120,27 @@ async def main():
 
         print("Generating comparison DPO pairs...")
         dataset = generate_comparison_dpo_pairs(cleaned_dataset)
-        print(f"Saving DPO comparison dataset to: {local_dpo_cache_path}...")
-        dataset.save_to_disk(local_dpo_cache_path)
+        # If a category was specified, save into the category dpo path to persist
+        save_path = local_dpo_cache_path if local_dpo_cache_path != "data_cache/test_dpo_pairs_comparison" else "data_cache/test_dpo_pairs_comparison"
+        print(f"Saving DPO comparison dataset to: {save_path}...")
+        dataset.save_to_disk(save_path)
 
     # --- End of main function logic ---
     print(f"Successfully loaded DPO comparison dataset of size: {len(dataset)}")
     dataset = dataset.select(range(min(1000, len(dataset))))  # Limit to 1000 samples or less
 
     # Initialize sampler
-    sampler = TinkerSampler(model_name="Qwen/Qwen3-4B-Instruct-2507",
-                            model_path="tinker://90ce9e55-9e89-4976-878b-c7f474fe92c0/sampler_weights/final",
-                            temperature=0.0, max_tokens=10)
+    temperature=0.0
+    model_name="Qwen/Qwen3-4B-Instruct-2507"
+    model_path="tinker://c2cf9723-af77-5458-9032-a7f5b10b20da:train:0/sampler_weights/final"
+    print("-------- Initializing sampler -------")
+    print(f"Model Name: {model_name}")
+    print(f"Model Path: {model_path}")
+    print(f"Temperature: {temperature}")
+    print("-------- Sampler initialized -------")
+    sampler = TinkerSampler(model_name=model_name,
+                            model_path=model_path,
+                            temperature=temperature, max_tokens=512)
 
     # asyncio generate predictions
     results = await asyncio.gather(*[process_one(data, sampler) for data in dataset])
@@ -126,7 +151,7 @@ async def main():
     total = len(predictions)
     accuracy = correct / total if total > 0 else 0.0
     
-    un_resolved = sum(1 for p in predictions if p not in ["A", "B"])
+    un_resolved = sum(1 for p in predictions if p not in ["A", "B"]) 
 
     print(f"Total: {total}, Correct: {correct}, Unresolved: {un_resolved}")
 
