@@ -44,8 +44,8 @@ class NoveltyDPOConfig:
     
     # Training Hyperparameters
     learning_rate: float = 5e-6
-    batch_size: int = 64
-    num_epochs: int = 10
+    batch_size: int = 128
+    num_epochs: int = 5
     dpo_beta: float = 0.1
     lora_rank: int = 32
     
