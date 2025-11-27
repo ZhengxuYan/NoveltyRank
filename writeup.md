@@ -61,11 +61,12 @@ Despite the 235B model’s size advantage, its classification accuracy lags the 
 	- Test metrics (limit 500, T=0.0): accuracy 0.758, precision 0.255, recall 0.149, F1 0.188
 - **Classification-DPO**
 	- Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv`
-	- Latest sampler: `tinker://e88323f5-71b3-5a81-a7e8-29e34c7ff873:train:0/sampler_weights/000320`
-	- Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.245, recall 0.277, F1 0.260
+	- Final sampler: `tinker://e88323f5-71b3-5a81-a7e8-29e34c7ff873:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.255, recall 0.298, F1 0.275
 - **Comparison-DPO**
 	- Result dir: `results/noveltyrank_dpo_qwen4b_comparison_cs_cv`
-	- Status: run incomplete; no sampler checkpoint yet
+  - Final sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.598
 
 <to_do: analysis results>
 
