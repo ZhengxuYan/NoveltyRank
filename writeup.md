@@ -1,6 +1,8 @@
 ## Tasks And Methods
 - **Classification task**: predict the novelty label (`label` column) from a single arXiv abstract. SFT uses the cleaned train/test splits under `data_cache/train_sft_data` and `data_cache/test_sft_data`, while the classification-DPO pipeline converts each labeled example into preferred/rejected completions via `create_classification_example`.
 - **Comparison task**: given a positive (novel) and negative (non-novel) abstract, select the more novel item. Pairs come from `build_comparison_pairs`, which cycles positives across all negatives to upsample minority examples.
+- **Comparison task**: given a positive (novel) and negative (non-novel) abstract, select the more novel item. Pairs come from `build_comparison_pairs`, which cycles positives across all negatives to upsample minority examples.
+- Note: inputs used in the examples and error analysis are the `Title` and `Abstract`. `Labels:` are shown as `predicted/true`. `Similarity Score` reports `max` and `avg` similarity.
 - **Method stack**:
 	- *Supervised fine-tuning (SFT)* fine-tunes Qwen-4B with cross-entropy and evaluates through `AccuracyOnLabeledTestSetEvaluator` (see `scripts/Qwen_4B/sft.py`).
 	- *Classification-DPO* applies `generate_classification_dpo_pairs` to build balanced preference datasets before DPO training (`scripts/Qwen_4B/dpo.py`).
@@ -62,13 +64,13 @@ Despite the 235B model’s size advantage, its classification accuracy lags the 
 - **Classification-DPO**
 	- Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv`
 	- Final sampler: `tinker://e88323f5-71b3-5a81-a7e8-29e34c7ff873:train:0/sampler_weights/final`
-  - Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.255, recall 0.298, F1 0.275
+  - Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.254, recall 0.298, F1 0.275
 - **Comparison-DPO**
 	- Result dir: `results/noveltyrank_dpo_qwen4b_comparison_cs_cv`
   - Final sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/final`
   - Test metrics (limit 500, T=0.0): accuracy 0.598
 
-<to_do: analysis results>
+Classification-DPO increases recall relative to SFT while keeping precision similar; Comparison-DPO slightly improves pairwise ranking. Further analysis should persist raw predictions for error inspection.
 
 ## Conduct Error Analysis ##
 
