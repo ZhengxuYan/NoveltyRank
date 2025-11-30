@@ -1,8 +1,13 @@
 
+"use client";
+
 import Link from 'next/link';
-import { Sparkles, Github } from 'lucide-react';
+import { Sparkles, Github, Globe } from 'lucide-react';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function Header() {
+  const { t, language, toggleLanguage } = useLanguage();
+
   return (
     <header className="fixed w-full top-0 z-50 glass">
       <div className="w-full px-6 h-16 flex items-center justify-between">
@@ -18,11 +23,19 @@ export default function Header() {
           </Link>
           
           <nav className="hidden md:flex items-center gap-1 text-sm font-medium text-slate-400">
-            <Link href="/" className="px-4 py-2 rounded-full text-white bg-white/5 hover:bg-white/10 transition-colors">Leaderboard</Link>
+            <Link href="/" className="px-4 py-2 rounded-full text-white bg-white/5 hover:bg-white/10 transition-colors">{t.nav.leaderboard}</Link>
           </nav>
         </div>
         
         <div className="flex items-center gap-4">
+           <button
+            onClick={toggleLanguage}
+            className="flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-white transition-colors px-3 py-1.5 rounded-full hover:bg-white/5"
+          >
+            <Globe className="w-4 h-4" />
+            {language === 'en' ? '中文' : 'English'}
+          </button>
+
            <a 
             href="https://huggingface.co/datasets/JasonYan777/novelty-ranked-preprints" 
             target="_blank" 
@@ -30,7 +43,7 @@ export default function Header() {
             className="hidden sm:flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-white transition-colors border border-slate-800 hover:border-slate-700 px-4 py-2 rounded-full bg-slate-900/50"
           >
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            Dataset
+            {t.nav.dataset}
           </a>
           <a
             href="https://github.com/ZhengxuYan/NoveltyRank"

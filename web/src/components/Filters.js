@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Search, Calendar, ChevronDown } from 'lucide-react';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 const CATEGORIES = [
   { label: "Overall", value: "All" },
@@ -14,12 +15,13 @@ const CATEGORIES = [
 ];
 
 const TIME_FRAMES = [
-  { label: "Last 7 Days", value: 7 },
-  { label: "Last 30 Days", value: 30 },
-  { label: "All Time (Since Dec 2025)", value: 3650 },
+  { labelKey: "week", value: 7 },
+  { labelKey: "month", value: 30 },
+  { labelKey: "all", value: 3650 },
 ];
 
 export default function Filters({ onFilterChange, onSearch }) {
+  const { t } = useLanguage();
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeDays, setActiveDays] = useState(30);
   const [searchQuery, setSearchQuery] = useState("");
@@ -49,7 +51,7 @@ export default function Filters({ onFilterChange, onSearch }) {
         </div>
         <input
           type="text"
-          placeholder="Search papers, authors, or IDs..."
+          placeholder={t.filters.searchPlaceholder}
           value={searchQuery}
           onChange={handleSearchChange}
           className="w-full pl-11 pr-4 py-3 bg-slate-900/50 border border-slate-800/50 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all backdrop-blur-sm"
@@ -72,7 +74,7 @@ export default function Filters({ onFilterChange, onSearch }) {
                   : 'border-transparent text-slate-500 hover:text-slate-300 hover:border-slate-700'}
               `}
             >
-              {cat.label}
+              {t.filters.categories[cat.value]}
             </button>
           ))}
         </nav>
@@ -88,7 +90,7 @@ export default function Filters({ onFilterChange, onSearch }) {
             className="w-full pl-9 pr-8 py-2 bg-slate-900 border border-slate-700 text-slate-300 text-xs font-medium rounded-lg focus:ring-1 focus:ring-indigo-500/50 focus:border-indigo-500 block appearance-none transition-all cursor-pointer hover:bg-slate-800"
           >
             {TIME_FRAMES.map((tf) => (
-              <option key={tf.value} value={tf.value}>{tf.label}</option>
+              <option key={tf.value} value={tf.value}>{t.filters.timeFrames[tf.labelKey]}</option>
             ))}
           </select>
           <div className="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none">

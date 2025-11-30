@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronUp, Award, Calendar, ExternalLink, FileText } from 'lucide-react';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function PaperRow({ paper, rank, compact = false }) {
+  const { t } = useLanguage();
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Novelty Score Color - using gradients/glows
@@ -127,7 +129,7 @@ export default function PaperRow({ paper, rank, compact = false }) {
           <td colSpan="3" className="px-6 py-4">
             <div className="pl-16 relative">
               <div className="absolute left-8 top-0 bottom-0 w-0.5 bg-slate-800"></div>
-              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Abstract</h4>
+              <h4 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">{t.dashboard.table.abstract}</h4>
               <p className="text-sm text-slate-300 leading-relaxed max-w-4xl">
                 {paper.abstract}
               </p>
@@ -144,7 +146,7 @@ export default function PaperRow({ paper, rank, compact = false }) {
                    rel="noopener noreferrer"
                    className="ml-auto flex items-center gap-1 text-xs font-medium text-indigo-400 hover:text-indigo-300"
                 >
-                  View Paper <ExternalLink className="w-3 h-3" />
+                  {t.dashboard.table.viewPaper} <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
             </div>
