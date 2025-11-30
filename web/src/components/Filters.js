@@ -15,7 +15,6 @@ const CATEGORIES = [
 ];
 
 const TIME_FRAMES = [
-  { labelKey: "threeDays", value: 3 },
   { labelKey: "week", value: 7 },
   { labelKey: "month", value: 30 },
   { labelKey: "all", value: 3650 },
