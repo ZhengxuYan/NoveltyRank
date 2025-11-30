@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award, Calendar, ExternalLink, FileText } from 'lucide-react';
+import { ChevronDown, ChevronUp, Award, Calendar, ExternalLink, FileText, Medal } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function PaperRow({ paper, rank, compact = false }) {
@@ -14,6 +14,15 @@ export default function PaperRow({ paper, rank, compact = false }) {
     if (score >= 1.0) return "text-indigo-400 bg-indigo-400/10 border-indigo-400/20";
     return "text-slate-400 bg-slate-400/10 border-slate-400/20";
   };
+
+  // Rank Style - Gold, Silver, Bronze text
+  const getRankStyle = (r) => {
+    if (r === 1) return "text-yellow-400 drop-shadow-[0_0_8px_rgba(250,204,21,0.5)]";
+    if (r === 2) return "text-slate-300 drop-shadow-[0_0_8px_rgba(203,213,225,0.5)]";
+    if (r === 3) return "text-amber-600 drop-shadow-[0_0_8px_rgba(217,119,6,0.5)]";
+    return "text-slate-500";
+  };
+
 
   // Clean acceptance details
   const cleanAcceptanceDetails = (details) => {
@@ -30,8 +39,8 @@ export default function PaperRow({ paper, rank, compact = false }) {
     return (
       <tr className="group border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors">
         <td className="py-3 pl-4 w-12 text-center">
-          <span className={`font-mono text-xs font-medium ${rank <= 3 ? 'text-amber-400' : 'text-slate-500'}`}>
-            #{rank}
+          <span className={`font-mono text-xs font-bold ${getRankStyle(paper.category_rank || rank)}`}>
+            #{paper.category_rank || rank}
           </span>
         </td>
         <td className="py-3 px-2">
@@ -52,9 +61,16 @@ export default function PaperRow({ paper, rank, compact = false }) {
           )}
         </td>
         <td className="py-3 pr-4 text-right w-20">
-          <span className={`font-mono text-xs font-bold ${paper.novelty_score >= 2.0 ? "text-emerald-400" : paper.novelty_score >= 1.0 ? "text-indigo-400" : "text-slate-400"}`}>
-            {paper.novelty_score.toFixed(2)}
-          </span>
+          <div className="flex flex-col items-end">
+            <span className={`font-mono text-xs font-bold ${paper.novelty_score >= 2.0 ? "text-emerald-400" : paper.novelty_score >= 1.0 ? "text-indigo-400" : "text-slate-400"}`}>
+              {paper.novelty_score.toFixed(2)}
+            </span>
+            {paper.percentile && (
+              <span className="text-[9px] text-slate-500 font-medium">
+                Top {100 - paper.percentile < 1 ? '<1' : Math.round(100 - paper.percentile)}%
+              </span>
+            )}
+          </div>
         </td>
       </tr>
     );
@@ -66,9 +82,10 @@ export default function PaperRow({ paper, rank, compact = false }) {
         className={`group transition-all duration-200 border-b border-slate-800/50 hover:bg-slate-800/30 ${isExpanded ? 'bg-slate-800/30' : ''}`}
       >
         {/* Rank */}
+        {/* Rank */}
         <td className="w-16 py-4 pl-6 text-center">
-          <span className={`font-mono text-sm font-medium ${rank <= 3 ? 'text-amber-400' : 'text-slate-500'}`}>
-            #{rank}
+          <span className={`font-mono text-xl font-bold ${getRankStyle(paper.category_rank || rank)}`}>
+            #{paper.category_rank || rank}
           </span>
         </td>
 
@@ -120,6 +137,11 @@ export default function PaperRow({ paper, rank, compact = false }) {
           <div className={`inline-flex items-center justify-center px-3 py-1 rounded-full border font-mono text-xs font-bold ${getScoreStyle(paper.novelty_score)}`}>
             {paper.novelty_score.toFixed(2)}
           </div>
+          {paper.percentile && (
+            <div className="mt-2 text-xs text-slate-500 font-medium">
+              Top {100 - paper.percentile < 1 ? '<1' : Math.round(100 - paper.percentile)}%
+            </div>
+          )}
         </td>
       </tr>
       

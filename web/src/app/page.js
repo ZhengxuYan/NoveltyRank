@@ -56,16 +56,60 @@ export default function Home() {
     loadData();
   }, []);
 
-  // Filter Logic (Base filter without category if All)
-  const baseFilteredPapers = useMemo(() => {
+  // Helper to calculate ranks and percentiles
+  const calculateRanks = (allPapers) => {
+    // Group by category
+    const byCategory = {};
+    allPapers.forEach(p => {
+      if (!p.primary_category) return;
+      const cat = p.primary_category; 
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(p);
+    });
+
+    // Sort and assign ranks
+    const paperMap = new Map();
+    
+    Object.keys(byCategory).forEach(cat => {
+      // Sort by novelty score descending
+      byCategory[cat].sort((a, b) => b.novelty_score - a.novelty_score);
+      
+      const total = byCategory[cat].length;
+      byCategory[cat].forEach((p, index) => {
+        const rank = index + 1;
+        const percentile = ((1 - (rank - 1) / total) * 100).toFixed(1);
+        
+        paperMap.set(p.arxiv_id, {
+          ...p,
+          category_rank: rank,
+          category_total: total,
+          percentile: percentile
+        });
+      });
+    });
+
+    // Return papers in original order (mapped)
+    return allPapers.map(p => paperMap.get(p.arxiv_id) || p);
+  };
+
+  // 1. Time Filter & Ranking
+  const rankedPapers = useMemo(() => {
     let result = [...papers];
 
-    // 1. Time Frame
+    // Filter by Time FIRST
     if (filters.days < 3650) {
       const cutoffDate = new Date();
       cutoffDate.setDate(cutoffDate.getDate() - filters.days);
       result = result.filter((p) => new Date(p.published) >= cutoffDate);
     }
+
+    // Then Calculate Ranks on the time-filtered set
+    return calculateRanks(result);
+  }, [papers, filters.days]);
+
+  // 2. Category & Search Filter
+  const baseFilteredPapers = useMemo(() => {
+    let result = rankedPapers;
 
     // Filter by Primary Category if not "All"
     if (filters.category !== "All") {
@@ -75,7 +119,7 @@ export default function Home() {
       );
     }
 
-    // 2. Search
+    // Search
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter((p) => {
@@ -91,7 +135,7 @@ export default function Home() {
     result.sort((a, b) => b.novelty_score - a.novelty_score);
 
     return result;
-  }, [papers, filters.days, searchQuery]);
+  }, [rankedPapers, filters.category, searchQuery]);
 
   // Specific Category List (when category is NOT All)
   const categoryPapers = useMemo(() => {

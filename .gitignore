@@ -1,6 +1,8 @@
 # Ignore ipynb files
 *.ipynb
 
+*.sh
+
 # Python Virtual Environments
 scrapyenv/
 venv/

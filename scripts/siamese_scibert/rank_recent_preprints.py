@@ -83,7 +83,7 @@ def get_device():
 
 import subprocess
 
-def fetch_recent_papers(days=30, max_results=None):
+def fetch_recent_papers(days=30):
     """Fetch recent papers using Scrapy spider (daily batch)."""
     print(f"Fetching papers from the last {days} days using Scrapy (daily batch)...")
     
@@ -300,7 +300,6 @@ def rank_papers(df, model, tokenizer, device, config):
 def main():
     parser = argparse.ArgumentParser(description="Rank recent arXiv preprints by novelty")
     parser.add_argument("--days", type=int, default=30, help="Number of days to look back")
-    parser.add_argument("--max_results", type=int, default=1000, help="Max papers to fetch")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing dataset instead of incremental update")
     args = parser.parse_args()
     
@@ -308,7 +307,7 @@ def main():
     print(f"Using device: {device}")
     
     # 1. Fetch Papers (Daily Batch)
-    new_papers_df = fetch_recent_papers(days=args.days, max_results=args.max_results)
+    new_papers_df = fetch_recent_papers(days=args.days)
     if len(new_papers_df) == 0:
         print("No papers found.")
         return
