@@ -2,7 +2,8 @@
 "use client";
 
 import Link from 'next/link';
-import { Sparkles, Github, Globe } from 'lucide-react';
+import Image from 'next/image';
+import { Github, Globe } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function Header() {
@@ -13,8 +14,14 @@ export default function Header() {
       <div className="w-full px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-3 group">
-            <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20 group-hover:bg-indigo-500/20 transition-colors">
-              <Sparkles className="w-5 h-5 text-indigo-400" />
+            <div className="relative w-8 h-8">
+              <Image 
+                src="/logo.png" 
+                alt="NoveltyRank Logo" 
+                fill
+                className="object-contain"
+                priority
+              />
             </div>
             <div className="flex flex-col">
               <span className="font-bold text-lg text-white leading-none tracking-tight">Novelty<span className="text-indigo-400">Rank</span></span>
