@@ -133,3 +133,5 @@ Temporary Items
 hf_token.txt
 .huggingface/
 
+.vercel
+.env*.local

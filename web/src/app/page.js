@@ -67,6 +67,14 @@ export default function Home() {
       result = result.filter((p) => new Date(p.published) >= cutoffDate);
     }
 
+    // Filter by Primary Category if not "All"
+    if (filters.category !== "All") {
+      result = result.filter(
+        (p) =>
+          p.primary_category && p.primary_category.includes(filters.category)
+      );
+    }
+
     // 2. Search
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -89,7 +97,7 @@ export default function Home() {
   const categoryPapers = useMemo(() => {
     if (filters.category === "All") return [];
     return baseFilteredPapers.filter(
-      (p) => p.categories && p.categories.includes(filters.category)
+      (p) => p.primary_category && p.primary_category.includes(filters.category)
     );
   }, [baseFilteredPapers, filters.category]);
 
@@ -99,7 +107,7 @@ export default function Home() {
 
     return DISPLAY_CATEGORIES.map((cat) => {
       const allCatPapers = baseFilteredPapers.filter(
-        (p) => p.categories && p.categories.includes(cat.value)
+        (p) => p.primary_category && p.primary_category.includes(cat.value)
       );
       const topPapers = allCatPapers.slice(0, 20); // Top 20 for dashboard
 
