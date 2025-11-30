@@ -29,7 +29,7 @@ class Config:
     EPOCHS = 5
     LEARNING_RATE = 1e-5
     WARMUP_RATIO = 0.1
-    WEIGHT_DECAY = 0.05
+    WEIGHT_DECAY = 0.1
     
     # Features
     USE_CLASSIFICATION_EMB = True
@@ -208,12 +208,12 @@ class SiameseSciBERT(nn.Module):
         # Increased Dropout to 0.5 for regularization
         self.score_head = nn.Sequential(
             nn.Dropout(0.5),
-            nn.Linear(total_dim, 512),
+            nn.Linear(total_dim, 256),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 128),
+            nn.Linear(256, 64),
             nn.ReLU(),
-            nn.Linear(128, 1) # Scalar output
+            nn.Linear(64, 1) # Scalar output
         )
         
     def forward_one(self, input_ids, attention_mask, classification_emb=None, proximity_emb=None, similarity_features=None):
@@ -254,6 +254,26 @@ class SiameseSciBERT(nn.Module):
         return score_a, score_b
 
 # ======================== Training ========================
+
+class EarlyStopping:
+    def __init__(self, patience=2, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, val_acc):
+        score = val_acc
+        if self.best_score is None:
+            self.best_score = score
+        elif score < self.best_score + self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = score
+            self.counter = 0
 
 def train_epoch(model, dataloader, optimizer, scheduler, device, config):
     model.train()
@@ -367,6 +387,8 @@ def main():
     
     best_acc = 0.0
     
+    early_stopping = EarlyStopping(patience=2, min_delta=0.001)
+    
     for epoch in range(Config.EPOCHS):
         print(f"\nEpoch {epoch+1}/{Config.EPOCHS}")
         train_loss, train_acc = train_epoch(model, train_loader, optimizer, scheduler, device, Config)
@@ -380,6 +402,11 @@ def main():
             os.makedirs(Config.MODEL_SAVE_DIR, exist_ok=True)
             torch.save(model.state_dict(), os.path.join(Config.MODEL_SAVE_DIR, "best_siamese_model.pth"))
             print(f"Saved best model with Acc: {best_acc:.4f}")
+            
+        early_stopping(val_acc)
+        if early_stopping.early_stop:
+            print("Early stopping triggered")
+            break
             
     print("\nTraining Complete!")
     print(f"Best Validation Accuracy: {best_acc:.4f}")
