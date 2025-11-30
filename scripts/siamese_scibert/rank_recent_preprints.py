@@ -81,41 +81,85 @@ def get_device():
     else:
         return torch.device("cpu")
 
-def fetch_recent_papers(days=3, max_results=100):
-    """Fetch recent papers from arXiv."""
-    print(f"Fetching papers from the last {days} days...")
+import subprocess
+
+def fetch_recent_papers(days=30, max_results=None):
+    """Fetch recent papers using Scrapy spider (daily batch)."""
+    print(f"Fetching papers from the last {days} days using Scrapy (daily batch)...")
     
-    # Construct query for AI/ML categories
-    # cs.LG, cs.AI, cs.CV, cs.CL, cs.RO, cs.CR
-    query = "cat:cs.LG OR cat:cs.AI OR cat:cs.CV OR cat:cs.CL OR cat:cs.RO OR cat:cs.CR"
+    # Calculate dates
+    end_date = datetime.datetime.now().strftime("%Y-%m-%d")
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime("%Y-%m-%d")
     
-    client = arxiv.Client()
-    search = arxiv.Search(
-        query=query,
-        max_results=max_results,
-        sort_by=arxiv.SortCriterion.SubmittedDate,
-        sort_order=arxiv.SortOrder.Descending
-    )
+    # Define paths
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    scraper_dir = os.path.join(project_root, "scrapers", "arxiv_scraper")
+    # Use daily_batch.csv which is overwritten each time
+    results_file = os.path.join(scraper_dir, "results", "daily_batch.csv")
     
-    papers = []
-    cutoff_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+    # Remove existing results file to ensure fresh data
+    if os.path.exists(results_file):
+        os.remove(results_file)
+        print(f"Removed existing results file: {results_file}")
+        
+    # Construct command
+    # scrapy crawl arxiv_daily -a start_date=YYYY-MM-DD -a end_date=YYYY-MM-DD
+    cmd = [
+        "scrapy", "crawl", "arxiv_daily",
+        "-a", f"start_date={start_date}",
+        "-a", f"end_date={end_date}"
+    ]
     
-    for result in client.results(search):
-        if result.published < cutoff_date:
-            break
-            
-        papers.append({
-            "title": result.title,
-            "abstract": result.summary,
-            "categories": ", ".join(result.categories),
-            "primary_category": result.primary_category,
-            "published": result.published,
-            "arxiv_id": result.entry_id.split("/")[-1],
-            "url": result.entry_id
+    print(f"Running command: {' '.join(cmd)}")
+    try:
+        subprocess.run(cmd, cwd=scraper_dir, check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error running Scrapy spider: {e}")
+        return pd.DataFrame()
+        
+    # Read results
+    if not os.path.exists(results_file):
+        print("No results file generated.")
+        return pd.DataFrame()
+        
+    try:
+        df = pd.read_csv(results_file)
+        print(f"Loaded {len(df)} papers from CSV.")
+        
+        # Map columns to expected format
+        # CSV: Title, Abstract, Categories, Primary Category, Publication Date, arXiv ID, arXiv URL, Is Accepted, Acceptance Details
+        
+        df = df.rename(columns={
+            "Title": "title",
+            "Abstract": "abstract",
+            "Categories": "categories",
+            "Primary Category": "primary_category",
+            "Publication Date": "published",
+            "arXiv ID": "arxiv_id",
+            "arXiv URL": "url",
+            "Is Accepted": "is_accepted",
+            "Acceptance Details": "acceptance_details"
         })
         
-    print(f"Found {len(papers)} papers.")
-    return pd.DataFrame(papers)
+        # Ensure required columns exist
+        required_cols = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url"]
+        for col in required_cols:
+            if col not in df.columns:
+                print(f"Missing column: {col}")
+                return pd.DataFrame()
+        
+        # Keep new columns if they exist
+        cols_to_keep = required_cols
+        if "is_accepted" in df.columns:
+            cols_to_keep.append("is_accepted")
+        if "acceptance_details" in df.columns:
+            cols_to_keep.append("acceptance_details")
+            
+        return df[cols_to_keep]
+        
+    except Exception as e:
+        print(f"Error reading results CSV: {e}")
+        return pd.DataFrame()
 
 def generate_specter_embeddings(df, device):
     """Generate SPECTER2 embeddings (classification and proximity)."""
@@ -247,21 +291,68 @@ def main():
     parser = argparse.ArgumentParser(description="Rank recent arXiv preprints by novelty")
     parser.add_argument("--days", type=int, default=30, help="Number of days to look back")
     parser.add_argument("--max_results", type=int, default=1000, help="Max papers to fetch")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing dataset instead of incremental update")
     args = parser.parse_args()
     
     device = get_device()
     print(f"Using device: {device}")
     
-    # 1. Fetch Papers
+    # 1. Fetch Papers (Daily Batch)
     new_papers_df = fetch_recent_papers(days=args.days, max_results=args.max_results)
     if len(new_papers_df) == 0:
         print("No papers found.")
         return
 
-    # 2. Generate Embeddings
-    new_papers_df = generate_specter_embeddings(new_papers_df, device)
+    # 2. Load Existing Dataset from Hugging Face
+    existing_df = pd.DataFrame()
+    unique_new_papers_df = new_papers_df
     
-    # 3. Load Reference Dataset
+    if not args.overwrite:
+        print("Loading existing dataset from Hugging Face...")
+        try:
+            existing_ds = load_dataset("JasonYan777/novelty-ranked-preprints", split="train")
+            existing_df = existing_ds.to_pandas()
+            print(f"Loaded {len(existing_df)} existing papers.")
+            
+            # Deduplicate: Filter out papers already in existing_df
+            # Normalize IDs by removing version suffix (e.g., v1)
+            import re
+            def normalize_id(aid):
+                return re.sub(r'v\d+$', '', str(aid))
+                
+            existing_ids = set(existing_df["arxiv_id"].apply(normalize_id))
+            
+            # Ensure new papers arxiv_id is string
+            new_papers_df["arxiv_id"] = new_papers_df["arxiv_id"].astype(str)
+            
+            # Filter
+            # We need to check normalized new IDs against normalized existing IDs
+            # But we want to keep the original ID in the dataframe (or maybe normalized? let's keep original)
+            new_papers_df["normalized_id"] = new_papers_df["arxiv_id"].apply(normalize_id)
+            
+            unique_new_papers_df = new_papers_df[~new_papers_df["normalized_id"].isin(existing_ids)].copy()
+            
+            # Drop temp column
+            unique_new_papers_df = unique_new_papers_df.drop(columns=["normalized_id"])
+            
+            print(f"Found {len(unique_new_papers_df)} new unique papers.")
+            
+            if len(unique_new_papers_df) == 0:
+                print("No new papers to process. Exiting.")
+                return
+
+        except Exception as e:
+            print(f"Could not load existing dataset (or it doesn't exist): {e}")
+            print("Proceeding with all fetched papers as new.")
+            existing_df = pd.DataFrame()
+            unique_new_papers_df = new_papers_df
+    else:
+        print("Overwrite mode enabled. Ignoring existing dataset.")
+
+    # 3. Generate Embeddings for NEW papers only
+    unique_new_papers_df = generate_specter_embeddings(unique_new_papers_df, device)
+    
+    # 4. Load Reference Dataset (Training Data)
     print("Loading reference dataset for similarity...")
     dataset_name = "JasonYan777/novelty-rank-with-similarities"
     hf_ds = load_dataset(dataset_name, split="train")
@@ -269,23 +360,14 @@ def main():
     
     # Rename columns to match
     ref_df = ref_df.rename(columns={
-        "classification_embedding": "classification_embedding", # already lowercase in HF? check
+        "classification_embedding": "classification_embedding", 
         "proximity_embedding": "proximity_embedding"
     })
     
-    # Ensure embeddings are numpy arrays
-    # In HF dataset they might be lists
-    # We need to check one
-    if isinstance(ref_df.iloc[0]["proximity_embedding"], list) or isinstance(ref_df.iloc[0]["proximity_embedding"], np.ndarray):
-         pass # good
-    else:
-        # If it's something else, we might need to parse. But usually it's list or array.
-        pass
-
-    # 4. Compute Similarity
-    new_papers_df = compute_similarity_features(new_papers_df, ref_df)
+    # 5. Compute Similarity for NEW papers
+    unique_new_papers_df = compute_similarity_features(unique_new_papers_df, ref_df)
     
-    # 5. Load Model and Rank
+    # 6. Load Model and Rank NEW papers
     print("Loading ranking model...")
     tokenizer = AutoTokenizer.from_pretrained(Config.SCIBERT_MODEL)
     model = SiameseSciBERT(Config)
@@ -299,46 +381,71 @@ def main():
         
     model.to(device)
     
-    ranked_df = rank_papers(new_papers_df, model, tokenizer, device, Config)
+    ranked_new_df = rank_papers(unique_new_papers_df, model, tokenizer, device, Config)
     
-    # 6. Display Results
+    # 7. Merge and Display
     print("\n" + "="*80)
-    print(f"Top 10 Most Novel Papers (Last {args.days} Days)")
+    print(f"Top 10 Most Novel NEW Papers")
     print("="*80)
     
-    for i, (idx, row) in enumerate(ranked_df.head(10).iterrows()):
+    for i, (idx, row) in enumerate(ranked_new_df.head(10).iterrows()):
         print(f"{i+1}. {row['title']}")
         print(f"   Score: {row['novelty_score']:.4f} | Categories: {row['categories']}")
         print(f"   URL: {row['url']}")
         print("-" * 80)
         
+    # Combine with existing data
+    if not existing_df.empty:
+        # Ensure columns match
+        # If existing_df doesn't have new columns (is_accepted, acceptance_details), add them
+        if "is_accepted" not in existing_df.columns:
+            existing_df["is_accepted"] = None
+        if "acceptance_details" not in existing_df.columns:
+            existing_df["acceptance_details"] = None
+            
+        # Select columns to keep for final dataset
+        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details"]
+        
+        # Ensure ranked_new_df has all columns (fill missing with None if needed)
+        for col in columns_to_keep:
+            if col not in ranked_new_df.columns:
+                ranked_new_df[col] = None
+        
+        # Filter both dfs to keep columns
+        ranked_new_df_clean = ranked_new_df[columns_to_keep].copy()
+        
+        # Ensure existing_df has all columns
+        for col in columns_to_keep:
+            if col not in existing_df.columns:
+                existing_df[col] = None
+        existing_df_clean = existing_df[columns_to_keep].copy()
+        
+        # Concatenate
+        final_df = pd.concat([ranked_new_df_clean, existing_df_clean], ignore_index=True)
+    else:
+        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details"]
+        for col in columns_to_keep:
+            if col not in ranked_new_df.columns:
+                ranked_new_df[col] = None
+        final_df = ranked_new_df[columns_to_keep].copy()
+        
+    # Sort final df by published date (descending) and then score? Or just score?
+    # Usually users want recent stuff. Let's sort by published date desc.
+    final_df["published"] = pd.to_datetime(final_df["published"])
+    final_df = final_df.sort_values("published", ascending=False)
+    # Convert back to string for HF
+    final_df["published"] = final_df["published"].astype(str)
+
     # Save results locally
-    output_file = f"novelty_ranking_{args.days}days.csv"
-    ranked_df.to_csv(output_file, index=False)
-    print(f"\nFull results saved to {output_file}")
+    output_file = f"novelty_ranking_updated.csv"
+    final_df.to_csv(output_file, index=False)
+    print(f"\nFull updated results saved to {output_file}")
     
-    # 7. Push to Hugging Face
+    # 8. Push to Hugging Face
     print("Pushing to Hugging Face...")
     try:
-        # Convert list columns to string or keep as list? HF Dataset handles lists well.
-        # But embeddings might be large. We might want to drop them to save space if only for display?
-        # The user wants to "deploy it for public to view", so we probably don't need embeddings in the deployed dataset, just scores and metadata.
-        # However, keeping them allows for future updates/re-ranking without re-embedding.
-        # Let's keep them for now, or drop if it's too big.
-        
-        # We should probably convert the pandas df to HF Dataset
         from datasets import Dataset
-        
-        # Drop embeddings to keep dataset light for the app?
-        # The app only needs Title, Abstract, Categories, URL, Score, Date.
-        # Let's keep a "light" version for the app.
-        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity"]
-        push_df = ranked_df[columns_to_keep].copy()
-        
-        # Ensure published is string or timestamp
-        push_df["published"] = push_df["published"].astype(str)
-        
-        ds = Dataset.from_pandas(push_df)
+        ds = Dataset.from_pandas(final_df)
         ds.push_to_hub("JasonYan777/novelty-ranked-preprints")
         print("Successfully pushed to JasonYan777/novelty-ranked-preprints")
         
