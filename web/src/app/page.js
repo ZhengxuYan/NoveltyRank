@@ -87,11 +87,15 @@ export default function Home() {
     if (filters.category !== "All") return null;
     
     return DISPLAY_CATEGORIES.map(cat => {
-      const catPapers = baseFilteredPapers
-        .filter(p => p.categories && p.categories.includes(cat.value))
-        .slice(0, 20); // Top 20 for dashboard
-      return { ...cat, papers: catPapers };
-    });
+      const allCatPapers = baseFilteredPapers.filter(p => p.categories && p.categories.includes(cat.value));
+      const topPapers = allCatPapers.slice(0, 20); // Top 20 for dashboard
+      
+      return { 
+        ...cat, 
+        papers: topPapers,
+        count: allCatPapers.length 
+      };
+    }).sort((a, b) => b.count - a.count); // Sort categories by paper count (descending)
   }, [baseFilteredPapers, filters.category]);
 
 
@@ -116,7 +120,7 @@ export default function Home() {
 
   return (
     <div className="min-h-screen pt-24 pb-12 bg-slate-950">
-      <div className="container mx-auto px-4 max-w-7xl">
+      <div className="w-full px-6">
         
         {/* Hero Section */}
         <div className="mb-12">
@@ -164,7 +168,12 @@ export default function Home() {
                    {dashboardData.map((categoryGroup) => (
                      <div key={categoryGroup.value + filters.days} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-lg hover:border-slate-700 transition-colors flex flex-col h-[600px] animate-in slide-in-from-bottom-2 duration-300">
                        <div className="px-6 py-4 border-b border-slate-800 bg-slate-900/50 flex justify-between items-center shrink-0">
-                         <h3 className="font-semibold text-slate-200">{categoryGroup.label}</h3>
+                         <div className="flex items-center gap-3">
+                           <h3 className="font-semibold text-slate-200">{categoryGroup.label}</h3>
+                           <span className="text-xs font-medium text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full border border-slate-700">
+                             {categoryGroup.count} papers
+                           </span>
+                         </div>
                          <button 
                             onClick={() => setFilters(prev => ({ ...prev, category: categoryGroup.value }))}
                             className="text-xs text-indigo-400 hover:text-indigo-300 font-medium"

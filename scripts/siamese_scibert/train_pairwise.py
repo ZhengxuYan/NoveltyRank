@@ -24,9 +24,9 @@ class Config:
     MAX_LEN = 512
     
     # Training
-    TRAIN_BATCH_SIZE = 16
-    VALID_BATCH_SIZE = 16
-    EPOCHS = 10
+    TRAIN_BATCH_SIZE = 32 # Reduced batch size slightly as we have more data
+    VALID_BATCH_SIZE = 64
+    EPOCHS = 5
     LEARNING_RATE = 1e-5
     WARMUP_RATIO = 0.1
     WEIGHT_DECAY = 0.05
@@ -97,6 +97,11 @@ class PairwiseNoveltyDataset(Dataset):
         
     def _generate_pairs(self):
         pairs = []
+        # Ratio of Not-Novel papers to pair with each Novel paper
+        # For training, we want more pairs to avoid overfitting.
+        # For testing, we can keep it 1:1 or 1:all. Let's do 1:5 for training.
+        n_negatives = 5 if self.is_train else 1
+        
         for cat, papers in self.category_map.items():
             novel_papers = papers["novel"]
             not_novel_papers = papers["not_novel"]
@@ -104,27 +109,23 @@ class PairwiseNoveltyDataset(Dataset):
             if not novel_papers or not not_novel_papers:
                 continue
                 
-            # For training, we can generate many pairs. 
-            # For simplicity, we'll pair each novel paper with a random non-novel paper.
-            # If we want more data, we could pair with multiple.
-            
+            # Strategy: Ensure we use ALL data + Augmentation
+            if self.is_train:
+                # Training: Use every not-novel paper at least once, 
+                # AND ensure every novel paper is used at least 5 times.
+                target_len = max(len(novel_papers) * 5, len(not_novel_papers))
+            else:
+                # Testing: Use max of both to test against all available data (comparable to previous run)
+                target_len = max(len(novel_papers), len(not_novel_papers))
+
             # Shuffle for randomness
             if self.is_train:
                 random.shuffle(novel_papers)
                 random.shuffle(not_novel_papers)
-            
-            # Strategy: Cycle through novel papers and pick a non-novel one
-            # If imbalance, reuse the smaller set
-            n_novel = len(novel_papers)
-            n_not_novel = len(not_novel_papers)
-            max_len = max(n_novel, n_not_novel)
-            
-            for i in range(max_len):
-                p_novel = novel_papers[i % n_novel]
-                p_not_novel = not_novel_papers[i % n_not_novel]
-                
-                # We always put Novel as Paper A, Not Novel as Paper B
-                # The loss function will enforce Score(A) > Score(B)
+
+            for i in range(target_len):
+                p_novel = novel_papers[i % len(novel_papers)]
+                p_not_novel = not_novel_papers[i % len(not_novel_papers)]
                 pairs.append((p_novel, p_not_novel))
                 
         if self.is_train:
@@ -204,11 +205,12 @@ class SiameseSciBERT(nn.Module):
         if config.USE_SIMILARITY_FEATURES: total_dim += 2
         
         # Scoring Head (Outputs a single scalar)
+        # Increased Dropout to 0.5 for regularization
         self.score_head = nn.Sequential(
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(total_dim, 512),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.5),
             nn.Linear(512, 128),
             nn.ReLU(),
             nn.Linear(128, 1) # Scalar output
@@ -277,7 +279,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, config):
         # BCEWithLogitsLoss(x, 1) = -log(sigmoid(x))
         # We want score_a > score_b, so diff = score_a - score_b should be high
         diff = score_a - score_b
-        loss = loss_fn(diff.squeeze(), targets)
+        loss = loss_fn(diff.view(-1), targets)
         
         loss = loss / config.GRADIENT_ACCUMULATION_STEPS
         loss.backward()
@@ -292,7 +294,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, device, config):
         
         # Accuracy: how often is score_a > score_b?
         preds = (score_a > score_b).float()
-        correct += (preds.squeeze() == targets).sum().item()
+        correct += (preds.view(-1) == targets).sum().item()
         total += targets.size(0)
         
         progress_bar.set_postfix({"loss": f"{total_loss/(step+1):.4f}", "acc": f"{correct/total:.4f}"})

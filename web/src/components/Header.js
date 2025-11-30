@@ -5,7 +5,7 @@ import { Sparkles, Github } from 'lucide-react';
 export default function Header() {
   return (
     <header className="fixed w-full top-0 z-50 glass">
-      <div className="container mx-auto px-6 h-16 flex items-center justify-between">
+      <div className="w-full px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-3 group">
             <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20 group-hover:bg-indigo-500/20 transition-colors">

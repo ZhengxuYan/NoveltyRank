@@ -138,7 +138,8 @@ def fetch_recent_papers(days=30, max_results=None):
             "arXiv ID": "arxiv_id",
             "arXiv URL": "url",
             "Is Accepted": "is_accepted",
-            "Acceptance Details": "acceptance_details"
+            "Acceptance Details": "acceptance_details",
+            "Authors": "authors"
         })
         
         # Ensure required columns exist
@@ -154,8 +155,17 @@ def fetch_recent_papers(days=30, max_results=None):
             cols_to_keep.append("is_accepted")
         if "acceptance_details" in df.columns:
             cols_to_keep.append("acceptance_details")
+        if "authors" in df.columns:
+            cols_to_keep.append("authors")
             
-        return df[cols_to_keep]
+        df = df[cols_to_keep]
+        
+        # Deduplicate by arxiv_id (papers can appear in multiple categories)
+        initial_len = len(df)
+        df = df.drop_duplicates(subset=["arxiv_id"])
+        print(f"Deduplicated fetched papers: {initial_len} -> {len(df)}")
+        
+        return df
         
     except Exception as e:
         print(f"Error reading results CSV: {e}")
@@ -402,9 +412,11 @@ def main():
             existing_df["is_accepted"] = None
         if "acceptance_details" not in existing_df.columns:
             existing_df["acceptance_details"] = None
+        if "authors" not in existing_df.columns:
+            existing_df["authors"] = None
             
         # Select columns to keep for final dataset
-        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details"]
+        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"]
         
         # Ensure ranked_new_df has all columns (fill missing with None if needed)
         for col in columns_to_keep:
@@ -423,7 +435,7 @@ def main():
         # Concatenate
         final_df = pd.concat([ranked_new_df_clean, existing_df_clean], ignore_index=True)
     else:
-        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details"]
+        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"]
         for col in columns_to_keep:
             if col not in ranked_new_df.columns:
                 ranked_new_df[col] = None
@@ -435,6 +447,16 @@ def main():
     final_df = final_df.sort_values("published", ascending=False)
     # Convert back to string for HF
     final_df["published"] = final_df["published"].astype(str)
+    
+    # Remove any potential duplicate rows (just in case)
+    final_df = final_df.drop_duplicates(subset=["arxiv_id"])
+    
+    # Remove artifact columns like __index_level_0__ if they exist
+    if "__index_level_0__" in final_df.columns:
+        final_df = final_df.drop(columns=["__index_level_0__"])
+        
+    # Reset index to avoid __index_level_0__ being created
+    final_df = final_df.reset_index(drop=True)
 
     # Save results locally
     output_file = f"novelty_ranking_updated.csv"
