@@ -1,8 +1,8 @@
 import logging
 import random
 from collections import deque
-from typing import Dict, List, Any
-from datasets import Dataset
+from typing import Dict, Any
+from datasets import Dataset, concatenate_datasets
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -64,6 +64,17 @@ def clean_dataset(dataset: Dataset, filter_year=True) -> Dataset:
 
     dataset = dataset.map(_rescale_batched, batched=True)
     return dataset
+
+
+def _extract_similarity_report(example: Dict[str, Any]) -> str:
+    """Return a cleaned similarity report block if available."""
+    report = example.get("similarity_report")
+    if not report:
+        return "No similarity report available."
+    if isinstance(report, list):
+        report = "\n\n".join(str(item).strip() for item in report)
+    report_str = str(report).strip()
+    return report_str or "No similarity report available."
 
 
 def format_paper_block(title: str, authors: str, abstract: str, max_sim: float, avg_sim: float) -> str:
@@ -202,14 +213,21 @@ def generate_comparison_dpo_pairs(dataset: Dataset, *, seed: int = 42) -> Datase
     return Dataset.from_list(pairs)
 
 
-def create_classification_example(paper: Dict) -> Dict:
+def create_classification_example(
+    paper: Dict,
+    *,
+    include_similarity_report: bool = False,
+) -> Dict:
     """
     Constructs a DPO classification prompt for a single paper.
     Task: Is this paper novel? (Label 1) or Not (Label 0).
     """
     
     # Build the user prompt and get the canonical label using the shared prompt generator
-    user_prompt, label = create_sft_example(paper)
+    user_prompt, label = create_sft_example(
+        paper,
+        include_similarity_report=include_similarity_report,
+    )
 
     # Ensure label is canonical '0' or '1'
     chosen_response = label if str(label) in ("0", "1") else "0"
@@ -222,61 +240,102 @@ def create_classification_example(paper: Dict) -> Dict:
     }
 
 
-def create_sft_example(example: dict[str, str]) -> tuple[str, str]:
+def create_sft_example(
+    example: dict[str, Any],
+    *,
+    include_similarity_report: bool = False,
+) -> tuple[str, str]:
     """
-    Generate a single-turn classification prompt (user-facing) using a structured,
-    prompt-engineered template and return the canonical label as a string.
-
-    Keeps the same return signature `(user_prompt, label)` used by other callers.
+    Generate a single-turn classification prompt (user-facing) using a structured template
+    and return the canonical label as a string. Optionally includes similarity analysis.
     """
     title = example.get("Title", "")
     authors = example.get("Authors", "")
     abstract = example.get("Abstract", "")
-    max_sim = example.get("max_similarity", "N/A")
-    avg_sim = example.get("avg_similarity", "N/A")
+    max_sim = example.get("max_similarity", example.get("Max similarity", "N/A"))
+    avg_sim = example.get("avg_similarity", example.get("Average similarity", "N/A"))
     label = str(example.get("label", ""))
 
-    # CV-focused SFT prompt: concise instruction + CV rubric + targeted few-shot examples
-    definition = (
-        "You are an expert computer-vision researcher and senior reviewer (CVPR/ICCV/NeurIPS level)."
-        " Assess whether the paper demonstrates *conceptual novelty* in computer vision."
+    concept_primer = (
+        "You are an expert AI researcher and senior conference reviewer (NeurIPS/ICLR level).\n"
+        "Your goal is to judge whether the submission introduces a conceptually novel idea."\
+        " Conceptual novelty captures fundamental shifts in scientific thinking."
     )
 
     rubric = (
-        "Focus on whether the paper introduces:"
-        "\n- A new problem or task formulation in vision"
-        "\n- A new representation or inductive bias (e.g., implicit 3D, equivariant features)"
-        "\n- A new learning objective or paradigm with broad applicability"
-        "\n- A major architectural shift tailored for visual data"
-        "\nDo NOT label small engineering gains or dataset re-runs as novel."
+        "---\n"
+        "### Conceptual Novelty Primer\n"
+        "Consider the following signals:\n"
+        "- Problem Formulation: Does it redefine an existing task or introduce a new one?\n"
+        "- Methodological Innovation: Does it propose a new class of algorithms or training paradigm?\n"
+        "- Theoretical Insight: Does it deliver a unifying or surprising theoretical lens?\n"
+        "- Cross-Disciplinary Import: Does it import a transformative idea from another domain?\n\n"
+        "Incremental tweaks (hyperparameters, surface-level architecture edits, dataset swaps) are not novel.\n"
     )
 
-    instructions = (
-        "Read the Title and Abstract, reason about conceptual novelty using the rubric,"
-        " and then output a single digit: '1' = Novel, '0' = Not Novel. Output only the digit."
+    metadata_block = (
+        "---\n"
+        "### Paper Metadata\n"
+        f"Title: {title}\n"
+        f"Authors: {authors}\n"
+        f"Abstract: {abstract}\n"
+        f"Max similarity to prior work: {max_sim}\n"
+        f"Average similarity to prior work: {avg_sim}\n"
     )
 
-    input_block = (
-        f"Title: {title}\nAuthors: {authors}\nAbstract: {abstract}\n"
-        f"Max similarity to prior work: {max_sim}\nAverage similarity to prior work: {avg_sim}"
+    if include_similarity_report:
+        similarity_report = _extract_similarity_report(example)
+        similarity_section = (
+            "---\n"
+            "### Similarity Report (Aggregated)\n"
+            f"{similarity_report}\n"
+        )
+    else:
+        similarity_section = ("---\n")
+
+    decision_block = (
+        "---\n"
+        "### Decision Instructions\n"
+        "1. Synthesize the available evidence (abstract + similarity signals).\n"
+        "2. Decide whether the work represents a conceptually novel contribution.\n"
+        "3. Output '1' if the paper is conceptually novel and likely to influence future research.\n"
+        "4. Output '0' if the contribution is incremental, derivative, or lacks conceptual novelty.\n"
+        "Respond with a single digit (0 or 1).\n"
     )
 
     few_shot = (
-        "Example 1:\nTitle: Vision Transformer (ViT)\nAbstract: Treats image as patch tokens and applies transformer backbones to images.\n"
-        "Max similarity: 0.68 | Avg similarity: 0.55\nReasoning: New architectural paradigm for images -> Novel.\nOutput: 1\n\n"
-        "Example 2:\nTitle: Improved ResNet Training via Extra Augmentation\nAbstract: Adds specific augmentations and hyperparameter tuning to improve benchmark scores.\n"
-        "Max similarity: 0.91 | Avg similarity: 0.82\nReasoning: Engineering-level improvements without conceptual shift -> Not Novel.\nOutput: 0\n\n"
-        "Example 3:\nTitle: Neural Radiance Fields (NeRF) for View Synthesis\nAbstract: Learns continuous volumetric scene representations enabling novel-view synthesis.\n"
-        "Max similarity: 0.72 | Avg similarity: 0.60\nReasoning: Introduces a new representation/learning paradigm -> Novel.\nOutput: 1"
+        "---\n"
+        "### Reference Decisions\n"
+        "Example 1:\n"
+        "Title: Differentiable Logic for Robotics\n"
+        "Abstract: Introduces a framework that composes continuous control policies with symbolic logic programs to enable reasoning-guided motion planning.\n"
+        "Similarity scores: max=0.61 | avg=0.48\n"
+        "Reasoning: Combines two previously disjoint paradigms (continuous control and symbolic reasoning) into a unified differentiable architecture -> Novel.\n"
+        "Output: 1\n\n"
+        "Example 2:\n"
+        "Title: Better Hyperparameters for BERT Fine-Tuning\n"
+        "Abstract: Reports extensive sweeps over learning rates and batch sizes for BERT on GLUE benchmarks.\n"
+        "Similarity scores: max=0.89 | avg=0.81\n"
+        "Reasoning: Purely empirical tuning without a new formulation or architecture -> Not Novel.\n"
+        "Output: 0\n\n"
+        "Example 3:\n"
+        "Title: Physical Priors for Diffusion Models\n"
+        "Abstract: Incorporates symbolic conservation laws into diffusion model training to improve controllable generation.\n"
+        "Similarity scores: max=0.67 | avg=0.58\n"
+        "Reasoning: Introduces a cross-disciplinary inductive bias that reshapes the generative objective -> Novel.\n"
+        "Output: 1"
     )
 
-    user_prompt = "\n\n".join([definition, rubric, instructions, "--- INPUT ---", input_block, "--- EXAMPLES ---", few_shot])
+    user_prompt = "\n\n".join([
+        concept_primer,
+        rubric,
+        metadata_block,
+        similarity_section,
+        decision_block,
+        few_shot,
+    ])
 
-    return (user_prompt, label)
-        
-
-from datasets import Dataset, concatenate_datasets
-
+    return user_prompt, label
 
 def _balance_dataset_by_upsampling(dataset: Dataset) -> Dataset:
     """
@@ -311,7 +370,11 @@ def _balance_dataset_by_upsampling(dataset: Dataset) -> Dataset:
     return balanced_dataset
 
 
-def generate_classification_dpo_pairs(dataset: Dataset) -> Dataset:
+def generate_classification_dpo_pairs(
+    dataset: Dataset,
+    *,
+    include_similarity_report: bool = False,
+) -> Dataset:
     """
     Generates Balanced DPO pairs for a Single-Paper Classification task.
     It upsamples the positive examples to match the count of negative examples.
@@ -321,8 +384,14 @@ def generate_classification_dpo_pairs(dataset: Dataset) -> Dataset:
     
     # 2. Map to DPO format
     original_cols = balanced_dataset.column_names
+    def _map_classification(example: Dict[str, Any]) -> Dict[str, Any]:
+        return create_classification_example(
+            example,
+            include_similarity_report=include_similarity_report,
+        )
+
     dpo_dataset = balanced_dataset.map(
-        create_classification_example,
+        _map_classification,
         remove_columns=original_cols,
         desc="Generating Balanced Classification DPO pairs"
     )

@@ -1,12 +1,15 @@
 # __init__.py
 """
-Initialize model samplers and handle prompt construction logic for comparison tasks.
+Initialize model samplers and handle prompt construction logic.
 """
 import os
 import sys
 import argparse
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-from models.Qwen_4B.utils import clean_dataset, generate_comparison_dpo_pairs
+current_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
+from models.Qwen_4B.sft_env import create_sft_example, clean_dataset
 import asyncio
 from datasets import Dataset, load_dataset, load_from_disk
 
@@ -65,18 +68,19 @@ class TinkerSampler():
 
         return response_message
     
-async def process_one(data, sampler):
-    # data is a row from the DPO pairs dataset
-    messages = data["prompt_conversation"]
-    label = data["chosen"][0]["content"]
-    
+async def process_one(data, sampler, include_similarity_report: bool):
+    user_prompt, label = create_sft_example(
+        data,
+        include_similarity_report=include_similarity_report,
+    )
+    messages = [
+        renderers.Message(role="user", content=user_prompt)
+    ]
     prediction = await sampler.generate(messages)
     prediction = prediction['content']
-    
-    # Extract "A" or "B" from prediction using regex
-    match = re.search(r'\b(A|B)\b', prediction, re.IGNORECASE)
-    prediction = match.group(0).upper() if match else ""
-    
+    # Extract "0" or "1" from prediction using regex
+    match = re.search(r'\b(0|1)\b', prediction)
+    prediction = match[0] if match else ""
     return prediction, label
 
 async def main():
@@ -84,65 +88,64 @@ async def main():
     dataset_path = "JasonYan777/novelty-rank-with-similarities"
     parser = argparse.ArgumentParser()
     parser.add_argument("--category", type=str, default="WHOLE_DATASET",
-                        help="Data category to build DPO pairs for (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
+                        help="Data category to evaluate (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
                         help="Base model name registered with Tinker")
     parser.add_argument("--model-path", type=str,
-                        default="tinker://c2cf9723-af77-5458-9032-a7f5b10b20da:train:0/sampler_weights/final",
+                        default="tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/sampler_weights/final",
                         help="Tinker checkpoint URI (tinker://...) for sampling; leave empty for base model")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature")
     parser.add_argument("--max-tokens", type=int, default=10,
                         help="Maximum tokens to sample per response")
-    parser.add_argument("--limit", type=int, default=100,
-                        help="Number of comparison examples to evaluate")
+    parser.add_argument("--limit", type=int, default=500,
+                        help="Number of evaluation examples to sample")
+    parser.add_argument(
+        "--include-similarity-report",
+        action="store_true",
+        help="Augment prompts with the precomputed similarity report",
+    )
     args = parser.parse_args()
+
     category = args.category
     model_name = args.model_name
     model_path = args.model_path or None
     temperature = args.temperature
     max_tokens = args.max_tokens
     dataset_limit = max(1, args.limit)
+    include_similarity_report = args.include_similarity_report
 
-    local_sft_cache_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
-    local_dpo_cache_path = "data_cache/test_dpo_pairs_comparison"
-
-    # Paths for category-specific caches
+    local_cache_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
+    # If a category-specific cleaned SFT split exists, prefer it
     category_sft_path = f"data_cache/categories/{category}/sft/test"
-    category_dpo_path = f"data_cache/categories/{category}/dpo/comparison/test"
-    if os.path.exists(category_dpo_path):
-        local_dpo_cache_path = category_dpo_path
-    elif os.path.exists(category_sft_path):
-        local_sft_cache_path = category_sft_path
+    if os.path.exists(category_sft_path):
+        local_cache_path = category_sft_path
     
     # --- Data Loading with Caching Feature ---
-    if os.path.exists(local_dpo_cache_path):
-        print(f"Local DPO comparison cache found at {local_dpo_cache_path}. Loading from disk...")
-        dataset = load_from_disk(local_dpo_cache_path)
+    
+    if os.path.exists(local_cache_path):
+        print(f"Local cleaned cache found at {local_cache_path}. Loading from disk...")
+        # Load the single cleaned split directly
+        dataset = load_from_disk(local_cache_path)
     else:
-        print(f"No local DPO comparison cache found. Processing data...")
-        if os.path.exists(local_sft_cache_path):
-            print(f"Loading cleaned data from {local_sft_cache_path}...")
-            cleaned_dataset = load_from_disk(local_sft_cache_path)
-        else:
-            print(f"No cleaned data cache found. Downloading {dataset_path} from web...")
-            dataset_raw = load_dataset(dataset_path, split="test")
-            
-            print("Downloading complete. Starting data cleaning...")
-            cleaned_dataset = clean_dataset(dataset_raw, filter_year=False)
-            
-            print(f"Cleaning complete, saving cleaned dataset to: {local_sft_cache_path}...")
-            cleaned_dataset.save_to_disk(local_sft_cache_path)
-
-        print("Generating comparison DPO pairs...")
-        dataset = generate_comparison_dpo_pairs(cleaned_dataset)
-        # If a category was specified, save into the category dpo path to persist
-        save_path = local_dpo_cache_path if local_dpo_cache_path != "data_cache/test_dpo_pairs_comparison" else "data_cache/test_dpo_pairs_comparison"
-        print(f"Saving DPO comparison dataset to: {save_path}...")
-        dataset.save_to_disk(save_path)
+        print(f"No local cache found. Downloading {dataset_path} from web...")
+        
+        # 1. Download the raw dataset (synchronous operation)
+        dataset_raw = load_dataset(dataset_path, split="test")
+        
+        # 2. Clean the dataset
+        print("Downloading complete. Starting data cleaning...")
+        cleaned_dataset = clean_dataset(dataset_raw)
+        
+        # 3. Save the cleaned result to disk for next time (synchronous operation)
+        print(f"Cleaning complete, saving cleaned dataset to: {local_cache_path}...")
+        cleaned_dataset.save_to_disk(local_cache_path)
+        
+        dataset = cleaned_dataset
 
     # --- End of main function logic ---
-    print(f"Successfully loaded DPO comparison dataset of size: {len(dataset)}")
+    print(f"Successfully loaded and cleaned dataset of size: {len(dataset)}")
+    # shuffle and limit dataset size for testing
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.select(range(min(dataset_limit, len(dataset))))
 
@@ -158,20 +161,34 @@ async def main():
                             temperature=temperature, max_tokens=max_tokens)
 
     # asyncio generate predictions
-    results = await asyncio.gather(*[process_one(data, sampler) for data in dataset])
+    results = await asyncio.gather(
+        *[
+            process_one(
+                data,
+                sampler,
+                include_similarity_report=include_similarity_report,
+            )
+            for data in dataset
+        ]
+    )
     predictions, labels = zip(*results)
 
-    # Compute accuracy
-    correct = sum(1 for p, l in zip(predictions, labels) if p == l)
-    total = len(predictions)
-    accuracy = correct / total if total > 0 else 0.0
-    
-    un_resolved = sum(1 for p in predictions if p not in ["A", "B"]) 
+    # Compute accuracy, precision, recall
+    tp = sum(1 for p, l in zip(predictions, labels) if p == "1" and l == "1")
+    fp = sum(1 for p, l in zip(predictions, labels) if p == "1" and l == "0")
+    fn = sum(1 for p, l in zip(predictions, labels) if p == "0" and l == "1")
+    tn = sum(1 for p, l in zip(predictions, labels) if p == "0" and l == "0")
+    un_resolved = sum(1 for p in predictions if p not in ["0", "1"])
 
-    print(f"Total: {total}, Correct: {correct}, Unresolved: {un_resolved}")
+    total = tp + fp + fn + tn + un_resolved
+    accuracy = (tp + tn) / total if total > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    F1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
 
-    return {"test_accuracy": accuracy}
+    return {"test_accuracy": accuracy, "test_precision": precision, "test_recall": recall, "test_F1": F1}
 
 if __name__ == "__main__":
+
     results = asyncio.run(main())
     print(results)

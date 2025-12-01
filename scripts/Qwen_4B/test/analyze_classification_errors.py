@@ -9,7 +9,10 @@ from pathlib import Path
 from datasets import load_dataset, load_from_disk
 from dotenv import load_dotenv
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 from models.Qwen_4B.sft_env import create_sft_example, clean_dataset  # noqa: E402
 from tinker import types  # noqa: E402
 from tinker_cookbook import renderers  # noqa: E402
@@ -60,8 +63,15 @@ class TinkerSampler:
         return response_message
 
 
-async def classify_one(example: dict, sampler: TinkerSampler) -> tuple[str, str]:
-    user_prompt, label = create_sft_example(example)
+async def classify_one(
+    example: dict,
+    sampler: TinkerSampler,
+    include_similarity_report: bool,
+) -> tuple[str, str]:
+    user_prompt, label = create_sft_example(
+        example,
+        include_similarity_report=include_similarity_report,
+    )
     messages = [renderers.Message(role="user", content=user_prompt)]
     prediction = await sampler.generate(messages)
     match = re.search(r"\b(0|1)\b", prediction["content"])
@@ -111,6 +121,11 @@ async def main() -> None:
         type=str,
         default="results/analysis/cs_cv_classification_error_examples.json",
     )
+    parser.add_argument(
+        "--include-similarity-report",
+        action="store_true",
+        help="Augment prompts with the precomputed similarity report",
+    )
     args = parser.parse_args()
 
     dataset = load_split(args.category, "JasonYan777/novelty-rank-with-similarities", args.seed)
@@ -124,7 +139,16 @@ async def main() -> None:
         max_tokens=args.max_tokens,
     )
 
-    predictions = await asyncio.gather(*[classify_one(example, sampler) for example in dataset])
+    predictions = await asyncio.gather(
+        *[
+            classify_one(
+                example,
+                sampler,
+                include_similarity_report=args.include_similarity_report,
+            )
+            for example in dataset
+        ]
+    )
 
     fp_examples: list[dict] = []
     fn_examples: list[dict] = []
@@ -172,6 +196,7 @@ async def main() -> None:
         "model_path": args.model_path,
         "temperature": args.temperature,
         "limit": len(dataset),
+        "include_similarity_report": args.include_similarity_report,
         "metrics": {
             "accuracy": accuracy,
             "precision": precision,

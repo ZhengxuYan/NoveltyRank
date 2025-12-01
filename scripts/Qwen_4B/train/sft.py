@@ -17,7 +17,9 @@ from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 import os, sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 from models.Qwen_4B.sft_env import NoveltyRankSFTDataBuilder, AccuracyOnLabeledTestSetEvaluator
 from models.Qwen_4B.utils.pipelines import WHOLE_DATASET, CS_RO, CS_CV
 
@@ -37,6 +39,7 @@ def build_config(
     category: str = WHOLE_DATASET,
     category_outdir: str = "data_cache",
     category_seed: int | None = None,
+    include_similarity_report: bool = False,
 ) -> train.Config:
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     common_config = ChatDatasetBuilderCommonConfig(
@@ -53,6 +56,7 @@ def build_config(
         category=category,
         category_outdir=category_outdir,
         category_seed=category_seed,
+        include_similarity_report=include_similarity_report,
     )
 
     def accuracy_eval_builder():
@@ -65,6 +69,7 @@ def build_config(
             category_seed=category_seed,
             train_cache_path=dataset.local_cache_path,
             local_cache_path=dataset.test_cache_path,
+            include_similarity_report=include_similarity_report,
         )
 
     return train.Config(
@@ -82,10 +87,18 @@ def build_config(
 
 
 # --- MODIFIED MAIN FUNCTION ---
-async def main(category: str = WHOLE_DATASET, category_seed: int | None = None):
+async def main(
+    category: str = WHOLE_DATASET,
+    category_seed: int | None = None,
+    include_similarity_report: bool = False,
+):
     load_dotenv()
     # chz.entrypoint automatically handles configuration parsing before calling main
-    config = build_config(category=category, category_seed=category_seed)
+    config = build_config(
+        category=category,
+        category_seed=category_seed,
+        include_similarity_report=include_similarity_report,
+    )
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
     await train.main(config) 
 

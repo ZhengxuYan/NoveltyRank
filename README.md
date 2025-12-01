@@ -120,7 +120,7 @@ Outputs include top-10 similar papers with scores for each paper in the dataset.
 #### Qwen3-4B Fine-Tuning
 
 ```bash
-python scripts/Qwen_4B/sft.py
+python scripts/Qwen_4B/train/sft.py
 ```
 
 
@@ -128,29 +128,37 @@ Common invocations:
 
 ```bash
 # Whole-dataset SFT (default)
-python scripts/Qwen_4B/sft.py
+python scripts/Qwen_4B/train/sft.py
 
 # Category-specific SFT (example: cs.CV)
-python scripts/Qwen_4B/sft.py category=cs.CV category_seed=42
+python scripts/Qwen_4B/train/sft.py category=cs.CV category_seed=42
+
+# Enable similarity-conditioned prompts
+python scripts/Qwen_4B/train/sft.py include_similarity_report=true
 ```
 
 If the script detects an existing log directory it will ask whether to delete, resume, or exit. Respond at the prompt to control the behavior.
 
 If you want to customize hyperparameters, you can modify the `build_config` function in 
-`scripts/Qwen_4B/sft.py`.
+`scripts/Qwen_4B/train/sft.py`.
 
 #### Qwen3-4B DPO Training
 Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypoint. When using a Tinker checkpoint URI for `model_name`, set `env_config.renderer_name=qwen3_instruct` to skip autodetection.
 
 ```bash
 # Whole-dataset classification DPO
-python scripts/Qwen_4B/dpo.py \
+python scripts/Qwen_4B/train/dpo.py \
    env_config.dpo_mode=classification \
    env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
    env_config.wandb_name=DPO_qwen_4b_classification
 
+# Include similarity reports during classification DPO
+python scripts/Qwen_4B/train/dpo.py \
+   env_config.dpo_mode=classification \
+   env_config.include_similarity_report=true
+
 # Category-specific classification DPO (cs.CV)
-python scripts/Qwen_4B/dpo.py \
+python scripts/Qwen_4B/train/dpo.py \
    env_config.dpo_mode=classification \
    env_config.category=cs.CV \
    env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
@@ -158,7 +166,7 @@ python scripts/Qwen_4B/dpo.py \
    env_config.wandb_name=DPO_qwen_4b_classification_cs_cv
 
 # Category-specific comparison DPO (cs.CV)
-python scripts/Qwen_4B/dpo.py \
+python scripts/Qwen_4B/train/dpo.py \
    env_config.dpo_mode=comparison \
    env_config.category=cs.CV \
    env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
@@ -178,14 +186,14 @@ Quickly sanity-check the latest checkpoints with the lightweight evaluation scri
 
 ```bash
 # Classification accuracy on cs.CV split
-python scripts/Qwen_4B/test_classification.py \
+python scripts/Qwen_4B/test/test_classification.py \
    --category CS_CV \
    --model-name Qwen/Qwen3-4B-Instruct-2507 \
    --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final \
    --temperature 0.0
 
 # Pairwise comparison accuracy on cs.CV split
-python scripts/Qwen_4B/test_comparison.py \
+python scripts/Qwen_4B/test/test_comparison.py \
    --category CS_CV \
    --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final
 ```
@@ -197,73 +205,7 @@ Key flags:
 - `--temperature`: Sampling temperature (default `0.0` for deterministic decoding).
 - `--max-tokens`: Maximum generated tokens (`10` for classification, `512` for comparison).
 - `--limit`: Caps the number of evaluation examples (useful for quick smoke tests).
-
-
-### Similarity-Aware CV Pipeline (`new_model/`)
-
-These scripts operate on the similarity-augmented CS_CV splits stored under `data_cache/similiarity_aware_categories/CS_CV/sft/`. They mirror the legacy Qwen flows but default to the new dataset builders and evaluators.
-
-- **Generate similarity reports**
-
-   ```bash
-   python embedding/simliarity_report/generate_similarity_reports.py \
-      --train-split data_cache/categories/CS_CV/sft/train \
-      --test-split data_cache/categories/CS_CV/sft/test \
-      --output-dir data_cache/similiarity_aware_categories/CS_CV/sft/train \
-      --model-name Qwen/Qwen3-235B-A22B-Instruct-2507 \
-      --max-concurrency 2 \
-      --preview-prompts 2 \
-      --preview-outputs 2
-   ```
-   Adjust `--offset` / `--limit` to process shards, and pass `--model-path` for a fine-tuned frontier checkpoint. Generated HF datasets land under `data_cache/similiarity_aware_categories/CS_CV/sft/`.
-   Adjust `--offset` / `--limit` to process shards, and pass `--model-path` for a fine-tuned frontier checkpoint. Generated HF datasets land under `data_cache/similiarity_aware_categories/CS_CV/sft/`.
-   
-- **Supervised fine-tuning**
-
-   ```bash
-   python new_model/scripts/sft.py \
-      model_name=Qwen/Qwen3-4B-Instruct-2507 \
-      train_dataset_path=data_cache/similiarity_aware_categories/CS_CV/sft/train \
-      test_dataset_path=data_cache/similiarity_aware_categories/CS_CV/sft/test \
-      log_path=results/new_model_sft_cv \
-      wandb_name=sft_qwen4b_cv_similarity
-   ```
-
-   The defaults target the CS_CV slice; override `log_path`, `learning_rate`, `num_epochs`, and related flags to launch new runs.
-
-- **Classification DPO**
-
-   ```bash
-   # Start from an SFT sampler (recommended)
-   python new_model/scripts/dpo_classification.py \
-      config.model_name=tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/sampler_weights/final \
-      config.load_checkpoint_path=tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/weights/final \
-      config.log_path=results/new_model_dpo_cv_v1 \
-      config.wandb_name=dpo_qwen4b_cv_similarity_sftinit
-
-   # Continue from a prior DPO state
-   python new_model/scripts/dpo_classification.py \
-      config.model_name=tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/sampler_weights/000310 \
-      config.load_checkpoint_path=tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/weights/000310 \
-      config.log_path=results/new_model_dpo_cv_v1_resume
-   ```
-
-   Remove `--config.load-checkpoint-path` to fine-tune directly from the supplied `model-name` weights.
-
-- **Similarity classification evals**
-
-   ```bash
-   python new_model/scripts/test_similarity_classification.py \
-      --mode dpo \
-      --dataset-path data_cache/similiarity_aware_categories/CS_CV/sft/test \
-      --model-name Qwen/Qwen3-4B-Instruct-2507 \
-      --model-path tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/sampler_weights/000310 \
-      --temperature 0.0 \
-      --limit 500
-   ```
-
-   Use `--mode sft` to replicate the single-turn prompt style. The script reports accuracy, precision, recall, F1, and unresolved counts.
-
+- `--include-similarity-report`: Adds the aggregated similarity context to each classification prompt.
 
 
 #### SciBERT Multimodal Training

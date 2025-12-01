@@ -4,7 +4,7 @@ Evaluate classification performance (SFT task) for one or more models across tem
 Saves per-run metrics to `results/eval_classification_<category>.jsonl`.
 
 Usage example:
-python scripts/Qwen_4B/eval_classification_temps.py --category CS_CV \
+python scripts/Qwen_4B/test/eval_classification_temps.py --category CS_CV \
   --models Qwen/Qwen3-4B-Instruct-2507,Qwen3-235B-A22B --temps 0.0,0.3,0.5,1.0 --max-samples 500
 """
 import os
@@ -14,7 +14,10 @@ import asyncio
 import json
 from typing import List
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 
 from dotenv import load_dotenv
 import tinker
@@ -59,7 +62,15 @@ class TinkerSampler:
         return raw_text_output.strip()
 
 
-async def evaluate_model_on_dataset(model_name: str, model_path: str | None, temp: float, dataset, max_samples: int):
+async def evaluate_model_on_dataset(
+    model_name: str,
+    model_path: str | None,
+    temp: float,
+    dataset,
+    max_samples: int,
+    *,
+    include_similarity_report: bool = False,
+):
     sampler = TinkerSampler(model_name=model_name, model_path=model_path, temperature=temp, max_tokens=16)
 
     # limit dataset
@@ -69,7 +80,10 @@ async def evaluate_model_on_dataset(model_name: str, model_path: str | None, tem
     labels = []
 
     async def process_one(example):
-        user_prompt, label = create_sft_example(example)
+        user_prompt, label = create_sft_example(
+            example,
+            include_similarity_report=include_similarity_report,
+        )
         messages = [renderers.Message(role="user", content=user_prompt)]
         out = await sampler.generate(messages)
         # extract first '0' or '1'
@@ -142,6 +156,11 @@ def main():
                         help="Maximum number of test examples to evaluate per run")
     parser.add_argument("--out", type=str, default=None, help="Output JSONL file path")
     parser.add_argument("--seed", type=int, default=42, help="Random seed to shuffle the test dataset")
+    parser.add_argument(
+        "--include-similarity-report",
+        action="store_true",
+        help="Augment prompts with the precomputed similarity report",
+    )
     args = parser.parse_args()
 
     models = [m.strip() for m in args.models.split(",") if m.strip()]
@@ -149,6 +168,7 @@ def main():
     temps = [float(x) for x in args.temps.split(",")]
     category = args.category
     max_samples = args.max_samples
+    include_similarity_report = args.include_similarity_report
 
     ds = load_test_dataset_for_category(category)
     # Shuffle dataset for randomness / reproducibility
@@ -169,7 +189,16 @@ def main():
         for model_name, model_path in zip(models, model_paths):
             for temp in temps:
                 print(f"Evaluating model={model_name} temp={temp} max_samples={max_samples}")
-                res = loop.run_until_complete(evaluate_model_on_dataset(model_name, model_path, temp, ds, max_samples))
+                res = loop.run_until_complete(
+                    evaluate_model_on_dataset(
+                        model_name,
+                        model_path,
+                        temp,
+                        ds,
+                        max_samples,
+                        include_similarity_report=include_similarity_report,
+                    )
+                )
                 print(json.dumps(res, indent=2))
                 fout.write(json.dumps(res) + "\n")
 

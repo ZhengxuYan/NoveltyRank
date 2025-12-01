@@ -4,7 +4,7 @@ import logging
 import chz
 import re
 import asyncio
-from typing import cast, Optional, List, Dict, Tuple
+from typing import cast, Optional, List, Dict, Tuple, Any
 from datasets import Dataset, load_dataset, load_from_disk 
 
 import tinker
@@ -55,6 +55,7 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         category_outdir: str = "data_cache",
         category_seed: Optional[int] = None,
         train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR,
+        include_similarity_report: bool = False,
     ):
         
         # Define the path for the specific 'test' split inside the cache directory
@@ -108,6 +109,7 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
 
         self.model_name = model_name
         self.max_tokens = max_tokens
+        self.include_similarity_report = include_similarity_report
 
         # Create a tokenizer for encoding/decoding text
         self.tokenizer = get_tokenizer(model_name)
@@ -143,7 +145,10 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         labels = []
         for ex in self.test_data:
             # create_sft_example generates the prompt and canonical label
-            user_prompts, user_labels = create_sft_example(ex)
+            user_prompts, user_labels = create_sft_example(
+                ex,
+                include_similarity_report=self.include_similarity_report,
+            )
             prompts.append(user_prompts)
             labels.append(user_labels)
 
@@ -214,6 +219,7 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
     category_outdir: str = chz.field(default="data_cache")
     category_seed: Optional[int] = chz.field(default=None)
     balance_dataset: bool = True
+    include_similarity_report: bool = chz.field(default=False)
 
     def __call__(self):
         train_split, test_split = ensure_base_sft_splits(
@@ -246,8 +252,11 @@ class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
         sft_renderer = SFTChatRenderer(self.renderer)
 
         # define function to convert each example to Datums
-        def example_to_datum(example: dict[str, str]) -> list[types.Datum]:
-            user_prompt, label = create_sft_example(example)
+        def example_to_datum(example: dict[str, Any]) -> list[types.Datum]:
+            user_prompt, label = create_sft_example(
+                example,
+                include_similarity_report=self.include_similarity_report,
+            )
 
             # convert to conversation format
             conversation = [

@@ -4,8 +4,9 @@
 - **Comparison task**: given a positive (novel) and negative (non-novel) abstract, select the more novel item. Pairs come from `build_comparison_pairs`, which cycles positives across all negatives to upsample minority examples.
 - Note: inputs used in the examples and error analysis are the `Title` and `Abstract`. `Labels:` are shown as `predicted/true`. `Similarity Score` reports `max` and `avg` similarity.
 - **Method stack**:
-	- *Supervised fine-tuning (SFT)* fine-tunes Qwen-4B with cross-entropy and evaluates through `AccuracyOnLabeledTestSetEvaluator` (see `scripts/Qwen_4B/sft.py`).
-	- *Classification-DPO* applies `generate_classification_dpo_pairs` to build balanced preference datasets before DPO training (`scripts/Qwen_4B/dpo.py`).
+  - *Supervised fine-tuning (SFT)* fine-tunes Qwen-4B with cross-entropy and evaluates through `AccuracyOnLabeledTestSetEvaluator` (see `scripts/Qwen_4B/train/sft.py`).
+  - *Supervised fine-tuning (SFT)* fine-tunes Qwen-4B with cross-entropy and evaluates through `AccuracyOnLabeledTestSetEvaluator` (see `scripts/Qwen_4B/train/sft.py`).
+  - *Classification-DPO* applies `generate_classification_dpo_pairs` to build balanced preference datasets before DPO training (`scripts/Qwen_4B/train/dpo.py`).
 	- *Comparison-DPO* optimizes on pairwise preferences produced by `build_comparison_pairs`; rewards are derived from a frozen reference model.
 
 ## Whole-Dataset Experiments (WHOLE_DATASET)
@@ -80,7 +81,7 @@ Classification-DPO increases recall relative to SFT while keeping precision simi
 
 ## Conduct Error Analysis ##
 
-Examples originate from running `scripts/Qwen_4B/analyze_classification_errors.py` on the CS_CV SFT sampler (`tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/sampler_weights/final`, the SFT run described in the section above; limit 500, T=0.0).
+Examples originate from running `scripts/Qwen_4B/test/analyze_classification_errors.py` on the CS_CV SFT sampler (`tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/sampler_weights/final`, the SFT run described in the section above; limit 500, T=0.0).
 
 False Positives (first 3):
 [1] Title: Referring Expression Instance Retrieval and A Strong End-to-End Baseline

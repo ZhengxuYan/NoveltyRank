@@ -3,7 +3,7 @@ import sys
 import logging
 import random
 import asyncio
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
 import chz
@@ -23,7 +23,7 @@ from tinker_cookbook.supervised.types import (
 )
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 
-from models.Qwen_4B.utils import create_classification_example
+from models.Qwen_4B.utils import create_classification_example, generate_classification_dpo_pairs
 from models.Qwen_4B.utils.pipelines import (
     WHOLE_DATASET,
     DEFAULT_TRAIN_CACHE_DIR,
@@ -212,6 +212,8 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
     category_seed: Optional[int] = None
     train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR
     test_cache_path: str = DEFAULT_TEST_CACHE_DIR
+    include_similarity_report: bool = chz.field(default=False)
+    include_similarity_report: bool = chz.field(default=False)
 
     def __call__(self) -> Evaluator:
         need_classification = self.dpo_mode == CLASSIFICATION_MODE
@@ -236,8 +238,14 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
         if need_classification:
             logger.info("Loading classification test split from %s", paths.test_sft)
             test_sft = load_from_disk(paths.test_sft)
+            def _map_eval(example: Dict[str, Any]) -> Dict[str, Any]:
+                return create_classification_example(
+                    example,
+                    include_similarity_report=self.include_similarity_report,
+                )
+
             test_dpo_pairs = test_sft.map(
-                create_classification_example,
+                _map_eval,
                 remove_columns=test_sft.column_names,
                 desc="Preparing classification evaluation pairs",
             )
@@ -297,9 +305,20 @@ class NoveltyRankDatasetLoader(ChatDatasetBuilder):
             need_comparison=not need_classification,
         )
         if need_classification:
-            target_cache_path = paths.train_classification
-            logger.info("Loading classification train cache from %s", target_cache_path)
-            train_dpo_pairs = load_from_disk(target_cache_path)
+            if self.include_similarity_report:
+                logger.info(
+                    "Generating classification train pairs with similarity reports from %s",
+                    paths.train_sft,
+                )
+                base_train = load_from_disk(paths.train_sft)
+                train_dpo_pairs = generate_classification_dpo_pairs(
+                    base_train,
+                    include_similarity_report=True,
+                )
+            else:
+                target_cache_path = paths.train_classification
+                logger.info("Loading classification train cache from %s", target_cache_path)
+                train_dpo_pairs = load_from_disk(target_cache_path)
         else:
             target_cache_path = paths.train_comparison
             logger.info("Loading comparison train cache from %s", target_cache_path)

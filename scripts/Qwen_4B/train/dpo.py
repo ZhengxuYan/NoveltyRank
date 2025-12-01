@@ -5,7 +5,10 @@ import chz
 from typing import Optional
 
 # 1. Setup paths to ensure local modules can be found
-sys.path.append(os.getcwd())
+current_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 
 # Tinker imports
 from dotenv import load_dotenv
@@ -58,6 +61,7 @@ class NoveltyDPOConfig:
     category: str = WHOLE_DATASET
     category_outdir: str = "data_cache"
     category_seed: Optional[int] = None
+    include_similarity_report: bool = False
 
     # Infrastructure
     base_url: Optional[str] = None  # For local/remote service URL
@@ -97,6 +101,7 @@ def main(env_config: NoveltyDPOConfig):
         category=env_config.category,
         category_outdir=env_config.category_outdir,
         category_seed=env_config.category_seed,
+        include_similarity_report=env_config.include_similarity_report,
     )
 
     # 4. Initialize Evaluator Builder
@@ -108,6 +113,7 @@ def main(env_config: NoveltyDPOConfig):
         category=env_config.category,
         category_outdir=env_config.category_outdir,
         category_seed=env_config.category_seed,
+        include_similarity_report=env_config.include_similarity_report,
     )
 
     # 5. Construct the Main DPO Training Configuration

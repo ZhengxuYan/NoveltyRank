@@ -4,7 +4,7 @@ Evaluate DPO comparison performance for models across temperatures.
 Saves per-run metrics to `results/eval_comparison_<category>.jsonl`.
 
 Usage example:
-python scripts/Qwen_4B/eval_comparison_temps.py --category CS_CV \
+python scripts/Qwen_4B/test/eval_comparison_temps.py --category CS_CV \
     --models Qwen/Qwen3-4B-Instruct-2507,Qwen/Qwen3-235B-A22B-Instruct-2507 --temps 0.0,0.3,0.5,1.0 --max-samples 300
 """
 import os
@@ -14,7 +14,10 @@ import asyncio
 import json
 from typing import List
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
+current_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 
 from dotenv import load_dotenv
 import tinker
