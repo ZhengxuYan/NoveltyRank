@@ -33,6 +33,7 @@ export default function Home() {
   const [filters, setFilters] = useState({ category: "All", days: 30 });
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [statusMsg, setStatusMsg] = useState("");
 
   // Initial Data Fetch with Background Loading
   useEffect(() => {
@@ -46,7 +47,11 @@ export default function Home() {
           }
         };
 
-        await fetchAllPapers(onProgress);
+        const onStatus = (msg) => {
+          setStatusMsg(msg);
+        };
+
+        await fetchAllPapers(onProgress, onStatus);
         setLoading(false);
       } catch (error) {
         console.error("Failed to load papers", error);
