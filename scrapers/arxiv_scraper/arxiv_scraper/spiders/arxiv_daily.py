@@ -170,8 +170,8 @@ class ArxivDailySpider(scrapy.Spider):
                 "Primary Category",
                 "Comment",
                 "Journal Reference",
-                "Is Accepted",       # NEW FIELD
-                "Acceptance Details" # NEW FIELD
+                "Is Accepted",       
+                "Acceptance Details" 
             ]
         )
 
@@ -472,8 +472,8 @@ class ArxivDailySpider(scrapy.Spider):
                         primary_category,
                         comment,
                         journal_ref,
-                        is_accepted,      # NEW
-                        acceptance_details # NEW
+                        is_accepted,      
+                        acceptance_details 
                     ]
                 )
                 self.articles_fetched += 1

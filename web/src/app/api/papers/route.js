@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 
 // Cache for 1 hour
-export const revalidate = 3600;
+// Force dynamic rendering to prevent caching
+export const dynamic = 'force-dynamic';
 
 const HF_DATASET = "JasonYan777/novelty-ranked-preprints";
 const HF_API_URL = `https://datasets-server.huggingface.co/rows?dataset=${HF_DATASET}&config=default&split=train`;
@@ -9,7 +10,8 @@ const HF_API_URL = `https://datasets-server.huggingface.co/rows?dataset=${HF_DAT
 async function fetchWithRetry(url, retries = 5) {
   for (let i = 0; i < retries; i++) {
     try {
-      const response = await fetch(url, { next: { revalidate: 3600 } });
+      // No-store cache to ensure fresh data
+      const response = await fetch(url, { cache: 'no-store' });
       
       if (response.ok) return response;
       

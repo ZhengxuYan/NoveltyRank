@@ -24,7 +24,7 @@ class Config:
     MAX_LEN = 512
     
     # Training
-    TRAIN_BATCH_SIZE = 32 # Reduced batch size slightly as we have more data
+    TRAIN_BATCH_SIZE = 64
     VALID_BATCH_SIZE = 64
     EPOCHS = 5
     LEARNING_RATE = 1e-5
@@ -57,6 +57,53 @@ def get_device():
         return torch.device("cuda")
     else:
         return torch.device("cpu")
+
+import re
+
+def clean_text(text):
+    """
+    Remove sentences that contain URLs or code availability phrases to prevent bias.
+    """
+    if not isinstance(text, str):
+        return ""
+        
+    # Simple sentence splitting by punctuation (.!?) followed by space or end of string
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    
+    cleaned_sentences = []
+    
+    # Regex for URLs
+    url_pattern = r'http\S+|www\.\S+|github\.com'
+    
+    # Phrases to trigger removal (case insensitive)
+    code_phrases = [
+        r'code is available',
+        r'code available',
+        r'source code',
+        r'implementation is available',
+        r'implementation available',
+        r'project page',
+        r'github'
+    ]
+    
+    for sent in sentences:
+        # Check for URL
+        if re.search(url_pattern, sent, re.IGNORECASE):
+            continue
+            
+        # Check for phrases
+        found_phrase = False
+        for phrase in code_phrases:
+            if re.search(phrase, sent, re.IGNORECASE):
+                found_phrase = True
+                break
+        
+        if found_phrase:
+            continue
+            
+        cleaned_sentences.append(sent)
+        
+    return ' '.join(cleaned_sentences)
 
 # ======================== Dataset ========================
 
@@ -136,10 +183,13 @@ class PairwiseNoveltyDataset(Dataset):
     def __len__(self):
         return len(self.pairs)
 
+
     def _process_paper(self, row):
         # Text
         title = str(row["Title"])
         abstract = str(row["Abstract"])
+        # Clean abstract
+        abstract = clean_text(abstract)
         categories = str(row["Categories"])
         text = f"{title} [SEP] {abstract} [SEP] {categories}"
         
@@ -198,6 +248,19 @@ class SiameseSciBERT(nn.Module):
         
         self.scibert = AutoModel.from_pretrained(config.SCIBERT_MODEL)
         self.hidden_size = self.scibert.config.hidden_size
+        
+        # Freeze embeddings and first 8 layers
+        for param in self.scibert.embeddings.parameters():
+            param.requires_grad = False
+            
+        for i in range(8):
+            for param in self.scibert.encoder.layer[i].parameters():
+                param.requires_grad = False
+                
+        # Verify trainable parameters
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.parameters())
+        print(f"Trainable Parameters: {trainable_params:,} / {total_params:,} ({trainable_params/total_params:.1%})")
         
         total_dim = self.hidden_size
         if config.USE_CLASSIFICATION_EMB: total_dim += 768
