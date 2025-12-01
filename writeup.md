@@ -65,6 +65,12 @@ Despite the 235B model’s size advantage, its classification accuracy lags the 
 	- Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv`
 	- Final sampler: `tinker://e88323f5-71b3-5a81-a7e8-29e34c7ff873:train:0/sampler_weights/final`
   - Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.254, recall 0.298, F1 0.275
+  
+- **SFT + DPO**
+  - Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv_sft`
+  - Best sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/000060`
+  - Test metrics (limit 500, T=0.0): accuracy 0.742, precision 0.246, recall 0.208, F1 0.225
+
 - **Comparison-DPO**
 	- Result dir: `results/noveltyrank_dpo_qwen4b_comparison_cs_cv`
   - Final sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/final`
@@ -116,3 +122,44 @@ False Negatives (first 3):
 - False negatives are technically substantial papers whose abstracts bury innovations in dense math or engineering language; when contributions arrive late or read as classical analysis, the model defaults to the majority class.
 - Predictions over-weight the opening paragraphs and familiar phrases such as "dual-branch" or "benchmark"; once those cues appear the model over-penalizes, exposing a recall gap on method-heavy work.
 - Similarity heuristics offer little separation between FP and FN cases, reinforcing that deeper semantic reasoning is required beyond max/avg similarity signals.
+
+Overall, the key issue is that we lack sufficient feature to help the model better understand novelty. Similarity scores alone are insufficient, and we need to explore richer metadata and context to guide the model's judgments.
+
+### taking Next Steps
+1. remove comparison DPO for now, focus on classification SFT and classification DPO.(considering the limited improvement from comparison DPO and the difficulty of error analysis)
+2. Use a detailed similarity report to help error analysis and data augmentation instead of only using similarity scores.
+
+
+## Add New Feature: Similarity Report
+We extract the top-K similar papers from arXiv for each target example in the dataset (stored in a dedicated column). A Qwen-235B model then generates a detailed similarity report informed by the target paper and its neighbours. Each report is instructed to cover four sections:
+
+1. **Shared Themes**
+  - Focus on topics, methods, tasks, data types, or motivations that appear explicitly in the texts.
+2. **Overlap Snapshot**
+  - Summarise key overlap areas in two to three sentences.
+  - Mention which arXiv IDs drive each overlap signal without analysing papers individually.
+3. **Distinctive Aspects**
+  - Bullet list of target-specific ideas or claims absent from the similar papers.
+  - Ground every bullet in explicit differences observed in the abstracts.
+4. **Novelty Verdict**
+  - Conclude with High/Medium/Low and a one-sentence justification tied to the aggregated evidence.
+
+
+### Results (Focusing on CS_CV)
+
+- **SFT**
+  - Result dir: `results/new_model_sft_cv`
+  - Final sampler: `tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.792, precision 0.414, recall 0.315, F1 0.358
+- **Classification-DPO (lr=5e-4)**
+  - Result dir: `results/new_model_dpo_cv_v3`
+  - Final sampler: `tinker://ad85b617-2ed7-5dde-b0f7-9302423902a0:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.568, precision 0.310, recall 0.338, F1 0.324, unresolved 124/500
+- **SFT + DPO**
+  - Result dir: `results/new_model_dpo_cv_v1`
+  - Best sampler: `tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/sampler_weights/000310`
+  - Test metrics (limit 500, T=0.0): accuracy 0.782, precision 0.384, recall 0.304, F1 0.339
+
+### Observations
+- Similarity reports help SFT improve precision and recall significantly, indicating that richer context aids the model's understanding of novelty.
+- Classification-DPO with similarity reports shows moderate accuracy but balanced precision/

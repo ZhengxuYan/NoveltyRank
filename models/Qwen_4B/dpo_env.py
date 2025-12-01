@@ -23,6 +23,7 @@ from tinker_cookbook.supervised.types import (
 )
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 
+from models.Qwen_4B.utils import create_classification_example
 from models.Qwen_4B.utils.pipelines import (
     WHOLE_DATASET,
     DEFAULT_TRAIN_CACHE_DIR,
@@ -133,15 +134,34 @@ class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
         async def generate(client, p_convs):
             tasks = []
             for p in p_convs:
-                inp = client.renderer.build_generation_prompt(p) if hasattr(client, 'renderer') else \
+                inp = client.renderer.build_generation_prompt(p) if hasattr(client, "renderer") else \
                       tinker.types.ModelInput.from_ints(self.renderer.tokenizer.encode(p[0]["content"]))
                 tasks.append(client.sample_async(
                     prompt=inp,
                     sampling_params=tinker.types.SamplingParams(max_tokens=self.max_tokens, temperature=0.0),
                     num_samples=1
                 ))
-            res = await asyncio.gather(*tasks)
-            return [self.renderer.tokenizer.decode(r.sequences[0].tokens).strip() for r in res]
+
+            responses = await asyncio.gather(*tasks)
+            decoded: list[str] = []
+            for response in responses:
+                sample = response
+
+                # Streaming responses require an explicit read before tokens are accessible.
+                if hasattr(sample, "read") and callable(sample.read):
+                    sample = await sample.read()
+
+                # Some client implementations wrap the response behind a ``result`` attribute.
+                inner = getattr(sample, "result", None)
+                if inner and hasattr(inner, "sequences"):
+                    sample = inner
+
+                if not hasattr(sample, "sequences"):
+                    raise RuntimeError("Sampling response missing sequences attribute after read().")
+
+                decoded.append(self.renderer.tokenizer.decode(sample.sequences[0].tokens).strip())
+
+            return decoded
 
         decoded = await generate(sampling_client, prompts)
 
@@ -213,13 +233,18 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
             need_comparison=not need_classification,
         )
 
-        target_cache_path = (
-            paths.test_classification if need_classification else paths.test_comparison
-        )
-        logger.info(
-            "Loading %s test cache from %s", "classification" if need_classification else "comparison", target_cache_path
-        )
-        test_dpo_pairs = load_from_disk(target_cache_path)
+        if need_classification:
+            logger.info("Loading classification test split from %s", paths.test_sft)
+            test_sft = load_from_disk(paths.test_sft)
+            test_dpo_pairs = test_sft.map(
+                create_classification_example,
+                remove_columns=test_sft.column_names,
+                desc="Preparing classification evaluation pairs",
+            )
+        else:
+            target_cache_path = paths.test_comparison
+            logger.info("Loading comparison test cache from %s", target_cache_path)
+            test_dpo_pairs = load_from_disk(target_cache_path)
         
         # only take 1000 expamples for evaluation speed
         test_dpo_pairs = test_dpo_pairs.select(range(min(1000, len(test_dpo_pairs))))
@@ -271,15 +296,14 @@ class NoveltyRankDatasetLoader(ChatDatasetBuilder):
             need_classification=need_classification,
             need_comparison=not need_classification,
         )
-        target_cache_path = (
-            paths.train_classification if need_classification else paths.train_comparison
-        )
-        logger.info(
-            "Loading %s train cache from %s",
-            "classification" if need_classification else "comparison",
-            target_cache_path,
-        )
-        train_dpo_pairs = load_from_disk(target_cache_path)
+        if need_classification:
+            target_cache_path = paths.train_classification
+            logger.info("Loading classification train cache from %s", target_cache_path)
+            train_dpo_pairs = load_from_disk(target_cache_path)
+        else:
+            target_cache_path = paths.train_comparison
+            logger.info("Loading comparison train cache from %s", target_cache_path)
+            train_dpo_pairs = load_from_disk(target_cache_path)
 
         logger.info(f"Loaded {len(train_dpo_pairs)} DPO examples ({mode_name}) for training.")
 
