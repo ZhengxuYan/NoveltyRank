@@ -70,7 +70,7 @@ async def classify_one(example: dict, sampler: TinkerSampler) -> tuple[str, str]
 
 
 def load_split(category: str, dataset_path: str, seed: int) -> list[dict]:
-    base_cache = "data_cache/test_sft_data/test_split_cleaned"
+    base_cache = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
     category_cache = f"data_cache/categories/{category}/sft/test"
 
     if os.path.exists(category_cache):

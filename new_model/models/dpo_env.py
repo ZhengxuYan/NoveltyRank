@@ -26,8 +26,8 @@ from .utils import create_classification_example, generate_classification_dpo_pa
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRAIN_DATASET_PATH = "simliarity_report/datasets/train_similarity_reports"
-DEFAULT_TEST_DATASET_PATH = "simliarity_report/datasets/test_similarity_reports"
+DEFAULT_TRAIN_DATASET_PATH = "data_cache/similiarity_aware_categories/CS_CV/sft/train"
+DEFAULT_TEST_DATASET_PATH = "data_cache/similiarity_aware_categories/CS_CV/sft/test"
 
 
 class NoveltyDPODataset(SupervisedDataset):

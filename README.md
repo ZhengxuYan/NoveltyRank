@@ -201,30 +201,30 @@ Key flags:
 
 ### Similarity-Aware CV Pipeline (`new_model/`)
 
-These scripts operate on the similarity-augmented CS_CV splits stored under `simliarity_report/datasets/`. They mirror the legacy Qwen flows but default to the new dataset builders and evaluators.
+These scripts operate on the similarity-augmented CS_CV splits stored under `data_cache/similiarity_aware_categories/CS_CV/sft/`. They mirror the legacy Qwen flows but default to the new dataset builders and evaluators.
 
 - **Generate similarity reports**
 
    ```bash
-   python simliarity_report/generate_similarity_reports.py \
+   python embedding/simliarity_report/generate_similarity_reports.py \
       --train-split data_cache/categories/CS_CV/sft/train \
       --test-split data_cache/categories/CS_CV/sft/test \
-      --output-dir simliarity_report/datasets/train_similarity_reports \
+      --output-dir data_cache/similiarity_aware_categories/CS_CV/sft/train \
       --model-name Qwen/Qwen3-235B-A22B-Instruct-2507 \
       --max-concurrency 2 \
       --preview-prompts 2 \
       --preview-outputs 2
    ```
-
-   Adjust `--offset` / `--limit` to process shards, and pass `--model-path` for a fine-tuned frontier checkpoint. Generated HF datasets land under `simliarity_report/datasets/`.
+   Adjust `--offset` / `--limit` to process shards, and pass `--model-path` for a fine-tuned frontier checkpoint. Generated HF datasets land under `data_cache/similiarity_aware_categories/CS_CV/sft/`.
+   Adjust `--offset` / `--limit` to process shards, and pass `--model-path` for a fine-tuned frontier checkpoint. Generated HF datasets land under `data_cache/similiarity_aware_categories/CS_CV/sft/`.
    
 - **Supervised fine-tuning**
 
    ```bash
    python new_model/scripts/sft.py \
       model_name=Qwen/Qwen3-4B-Instruct-2507 \
-      train_dataset_path=simliarity_report/datasets/train_similarity_reports \
-      test_dataset_path=simliarity_report/datasets/test_similarity_reports \
+      train_dataset_path=data_cache/similiarity_aware_categories/CS_CV/sft/train \
+      test_dataset_path=data_cache/similiarity_aware_categories/CS_CV/sft/test \
       log_path=results/new_model_sft_cv \
       wandb_name=sft_qwen4b_cv_similarity
    ```
@@ -255,7 +255,7 @@ These scripts operate on the similarity-augmented CS_CV splits stored under `sim
    ```bash
    python new_model/scripts/test_similarity_classification.py \
       --mode dpo \
-      --dataset-path simliarity_report/datasets/test_similarity_reports \
+      --dataset-path data_cache/similiarity_aware_categories/CS_CV/sft/test \
       --model-name Qwen/Qwen3-4B-Instruct-2507 \
       --model-path tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/sampler_weights/000310 \
       --temperature 0.0 \

@@ -85,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate classification accuracy on similarity reports")
     parser.add_argument(
         "--dataset-path",
-        default="simliarity_report/datasets/test_similarity_reports",
+        default="data_cache/similiarity_aware_categories/CS_CV/sft/test",
         help="Path to the similarity-augmented dataset saved with Hugging Face",
     )
     parser.add_argument(

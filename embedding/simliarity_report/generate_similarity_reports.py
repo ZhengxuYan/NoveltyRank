@@ -15,15 +15,13 @@ try:  # Allow running as a module or as a script
     from .prompts import build_similarity_prompt
     from .sampler import TinkerSampler
 except ImportError:  # pragma: no cover - executed only for direct script usage
-    import sys
-
     CURRENT_DIR = os.path.dirname(__file__)
-    PARENT_DIR = os.path.dirname(CURRENT_DIR)
-    if PARENT_DIR not in sys.path:
-        sys.path.insert(0, PARENT_DIR)
-    from simliarity_report.metadata import ArxivMetadataIndex, SimilarPaper
-    from simliarity_report.prompts import build_similarity_prompt
-    from simliarity_report.sampler import TinkerSampler
+    REPO_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+    if REPO_ROOT not in sys.path:
+        sys.path.insert(0, REPO_ROOT)
+    from embedding.simliarity_report.metadata import ArxivMetadataIndex, SimilarPaper
+    from embedding.simliarity_report.prompts import build_similarity_prompt
+    from embedding.simliarity_report.sampler import TinkerSampler
 
 load_dotenv()
 logger = logging.getLogger("similarity_report")
@@ -265,7 +263,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--metadata-cache",
-        default="simliarity_report/cache/metadata_index.pkl",
+        default="embedding/simliarity_report/cache/metadata_index.pkl",
         help="Optional path to cache the metadata index for faster reloads.",
     )
     parser.add_argument(

@@ -103,7 +103,7 @@ async def main():
     max_tokens = args.max_tokens
     dataset_limit = max(1, args.limit)
 
-    local_cache_path = "data_cache/test_sft_data/test_split_cleaned"
+    local_cache_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
     # If a category-specific cleaned SFT split exists, prefer it
     category_sft_path = f"data_cache/categories/{category}/sft/test"
     if os.path.exists(category_sft_path):

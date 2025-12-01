@@ -104,7 +104,7 @@ async def main():
     max_tokens = args.max_tokens
     dataset_limit = max(1, args.limit)
 
-    local_sft_cache_path = "data_cache/test_sft_data/test_split_cleaned"
+    local_sft_cache_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
     local_dpo_cache_path = "data_cache/test_dpo_pairs_comparison"
 
     # Paths for category-specific caches

@@ -115,8 +115,8 @@ def load_test_dataset_for_category(category: str):
     cat_sft = f"data_cache/categories/{category}/sft/test"
     if os.path.exists(cat_sft):
         return load_from_disk(cat_sft)
-    # fallback to global test_sft_data
-    global_path = "data_cache/test_sft_data/test_split_cleaned"
+    # fallback to the whole-dataset cleaned split
+    global_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
     if os.path.exists(global_path):
         return load_from_disk(global_path)
     # otherwise download and clean
