@@ -10,9 +10,10 @@ import arxiv
 # import faiss # Removed due to segfault
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
-from datasets import load_dataset
+from datasets import load_dataset, Dataset, DatasetDict, concatenate_datasets
 from transformers import AutoTokenizer, AutoModel
 from adapters import AutoAdapterModel
+from openalex_utils import enrich_papers_with_openalex
 
 # ======================== Configuration ========================
 
@@ -27,7 +28,7 @@ class Config:
     USE_SIMILARITY_FEATURES = True
     
     # Paths
-    MODEL_PATH = "models/siamese_scibert_multimodal/best_siamese_model.pth"
+    MODEL_PATH = "models/siamese_scibert_multimodal/best_siamese_model_v3.pth"
 
 # ======================== Model Definition ========================
 
@@ -47,12 +48,12 @@ class SiameseSciBERT(nn.Module):
         # Scoring Head (Outputs a single scalar)
         self.score_head = nn.Sequential(
             nn.Dropout(0.3),
-            nn.Linear(total_dim, 512),
+            nn.Linear(total_dim, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(512, 128),
+            nn.Linear(256, 64),
             nn.ReLU(),
-            nn.Linear(128, 1) # Scalar output
+            nn.Linear(64, 1) # Scalar output
         )
         
     def forward_one(self, input_ids, attention_mask, classification_emb=None, proximity_emb=None, similarity_features=None):
@@ -139,7 +140,12 @@ def fetch_recent_papers(days=30):
             "arXiv URL": "url",
             "Is Accepted": "is_accepted",
             "Acceptance Details": "acceptance_details",
-            "Authors": "authors"
+            "Authors": "authors",
+            "DOI": "doi",
+            "Updated Date": "updated_date",
+            "Author Affiliations": "affiliations",
+            "Comment": "comment",
+            "Journal Reference": "journal_ref"
         })
         
         # Ensure required columns exist
@@ -151,12 +157,10 @@ def fetch_recent_papers(days=30):
         
         # Keep new columns if they exist
         cols_to_keep = required_cols
-        if "is_accepted" in df.columns:
-            cols_to_keep.append("is_accepted")
-        if "acceptance_details" in df.columns:
-            cols_to_keep.append("acceptance_details")
-        if "authors" in df.columns:
-            cols_to_keep.append("authors")
+        optional_cols = ["is_accepted", "acceptance_details", "authors", "doi", "updated_date", "affiliations", "comment", "journal_ref"]
+        for col in optional_cols:
+            if col in df.columns:
+                cols_to_keep.append(col)
             
         df = df[cols_to_keep]
         
@@ -211,33 +215,84 @@ def generate_specter_embeddings(df, device):
     return df
 
 def compute_similarity_features(target_df, reference_df):
-    """Compute max_similarity and avg_similarity against reference dataset."""
-    print("Computing similarity features...")
+    """Compute max_similarity and avg_similarity against reference dataset (365-day window)."""
+    print("Computing similarity features (365-day window)...")
     
     # Filter reference df for valid embeddings
     reference_df = reference_df[reference_df["proximity_embedding"].notna()]
     valid_mask = reference_df["proximity_embedding"].apply(lambda x: len(x) == 768 if isinstance(x, (list, np.ndarray)) else False)
-    reference_df = reference_df[valid_mask]
+    reference_df = reference_df[valid_mask].copy()
     
     if len(reference_df) == 0:
         print("Error: No valid reference embeddings found.")
         return target_df
 
+    # Parse dates
+    print("Parsing dates...")
     try:
-        ref_embs = np.stack(reference_df["proximity_embedding"].values).astype('float32')
-        target_embs = np.stack(target_df["proximity_embedding"].values).astype('float32')
+        target_df["published_dt"] = pd.to_datetime(target_df["published"], errors='coerce')
+        reference_df["published_dt"] = pd.to_datetime(reference_df["Publication Date"], errors='coerce')
         
-        print(f"Computing cosine similarity between {target_embs.shape} and {ref_embs.shape}...")
+        # Drop rows with invalid dates in reference (optional, but good for safety)
+        reference_df = reference_df.dropna(subset=["published_dt"])
         
-        # Compute cosine similarity matrix [n_targets, n_refs]
-        sim_matrix = cosine_similarity(target_embs, ref_embs)
+        # Sort reference by date for potential optimization (though we'll filter by mask)
+        reference_df = reference_df.sort_values("published_dt")
         
-        max_sims = []
-        avg_sims = []
+        # Pre-convert reference embeddings to a single numpy array for indexing
+        # But since we need to filter dynamically, we might need to slice or index into this
+        # Actually, keeping them in DF and converting subset to numpy is safer/easier
         
-        # For each target paper, find top 10 similar reference papers
-        for i in range(len(target_df)):
-            sims = sim_matrix[i]
+    except Exception as e:
+        print(f"Error parsing dates: {e}")
+        return target_df
+
+    max_sims = []
+    avg_sims = []
+    top_10_sims_list = []
+    
+    print(f"Processing {len(target_df)} target papers...")
+    
+    for idx, row in tqdm(target_df.iterrows(), total=len(target_df), desc="Similarity"):
+        target_date = row["published_dt"]
+        if pd.isna(target_date):
+            max_sims.append(0.0)
+            avg_sims.append(0.0)
+            top_10_sims_list.append([])
+            continue
+            
+        start_date = target_date - datetime.timedelta(days=365)
+        
+        # Filter reference papers within [start_date, target_date]
+        window_mask = (reference_df["published_dt"] >= start_date) & (reference_df["published_dt"] <= target_date)
+        window_refs = reference_df[window_mask].copy()
+        
+        # Exclude the paper itself if present
+        target_id = str(row["arxiv_id"])
+        # Normalize target ID (remove version if present)
+        if "v" in target_id:
+             target_id = target_id.split("v")[0]
+             
+        # Filter out self
+        # Reference IDs might also have versions
+        window_refs["normalized_id"] = window_refs["arXiv ID"].astype(str).apply(lambda x: x.split("v")[0] if "v" in x else x)
+        window_refs = window_refs[window_refs["normalized_id"] != target_id]
+        
+        if len(window_refs) == 0:
+            max_sims.append(0.0)
+            avg_sims.append(0.0)
+            top_10_sims_list.append([])
+            continue
+            
+        # Compute similarity
+        target_emb = np.array(row["proximity_embedding"], dtype='float32').reshape(1, -1)
+        ref_embs = np.stack(window_refs["proximity_embedding"].values).astype('float32')
+        
+        # Cosine similarity: (1, 768) x (N, 768).T -> (1, N)
+        sims = cosine_similarity(target_emb, ref_embs)[0]
+        
+        # Top 10
+        if len(sims) > 0:
             # Sort descending
             top_k_indices = np.argsort(sims)[-10:][::-1]
             top_k_sims = sims[top_k_indices]
@@ -245,15 +300,193 @@ def compute_similarity_features(target_df, reference_df):
             max_sims.append(float(top_k_sims[0]))
             avg_sims.append(float(np.mean(top_k_sims)))
             
-        target_df["max_similarity"] = max_sims
-        target_df["avg_similarity"] = avg_sims
-        
-    except Exception as e:
-        print(f"Error in similarity computation: {e}")
-        target_df["max_similarity"] = 0.0
-        target_df["avg_similarity"] = 0.0
+            # Construct top_10_similar list
+            current_top_10 = []
+            for k_idx, sim_score in zip(top_k_indices, top_k_sims):
+                 ref_row = window_refs.iloc[k_idx]
+                 current_top_10.append({
+                     "arxiv_id": ref_row["arXiv ID"],
+                     "similarity_score": float(sim_score),
+                     "embedding": ref_row["proximity_embedding"],
+                     "publication_date": str(ref_row["published_dt"].date())
+                 })
+            top_10_sims_list.append(current_top_10)
+        else:
+            max_sims.append(0.0)
+            avg_sims.append(0.0)
+            top_10_sims_list.append([])
+            
+    target_df["max_similarity"] = max_sims
+    target_df["avg_similarity"] = avg_sims
+    target_df["top_10_similar"] = top_10_sims_list
+    
+    # Cleanup temp column
+    if "published_dt" in target_df.columns:
+        target_df = target_df.drop(columns=["published_dt"])
         
     return target_df
+
+def update_reference_dataset(new_papers_df):
+    """Update the reference dataset with new papers."""
+    print("\n" + "="*80)
+    print("Updating Reference Dataset")
+    print("="*80)
+    
+    try:
+        dataset_name = "JasonYan777/novelty-rank-with-similarities-final"
+        print(f"Loading {dataset_name}...")
+        ds = load_dataset(dataset_name)
+        
+        # We will append to the 'test' split as these are new papers
+        test_ds = ds["test"]
+        
+        # Remove artifact columns if present
+        if "__index_level_0__" in test_ds.column_names:
+            print("Removing __index_level_0__ from reference dataset...")
+            test_ds = test_ds.remove_columns(["__index_level_0__"])
+        
+        # Prepare new papers dataframe to match reference schema
+        # Reference columns: ['arXiv ID', 'arXiv URL', 'PDF URL', 'DOI', 'Publication Date', 'Updated Date', 'Title', 'Authors', 'Author Affiliations', 'Abstract', 'Categories', 'Primary Category', 'Comment', 'Journal Reference', 'Matched Conferences', 'label', 'source', 'classification_embedding', 'proximity_embedding', 'top_10_similar', 'max_similarity', 'avg_similarity']
+        
+        df = new_papers_df.copy()
+        
+        # Map columns
+        rename_map = {
+            "arxiv_id": "arXiv ID",
+            "url": "arXiv URL",
+            "title": "Title",
+            "authors": "Authors",
+            "abstract": "Abstract",
+            "categories": "Categories",
+            "primary_category": "Primary Category",
+            "published": "Publication Date"
+        }
+        df = df.rename(columns=rename_map)
+        
+        # Add missing columns
+        # Add missing columns
+        # PDF URL can be derived
+        df["PDF URL"] = df["arXiv ID"].apply(lambda x: f"https://arxiv.org/pdf/{x}.pdf" if x else None)
+        
+        # Map fields if they exist in the dataframe, otherwise None
+        df["DOI"] = df["doi"] if "doi" in df.columns else None
+        df["Updated Date"] = df["updated_date"] if "updated_date" in df.columns else df["Publication Date"]
+        df["Author Affiliations"] = df["affiliations"] if "affiliations" in df.columns else None
+        df["Comment"] = df["comment"] if "comment" in df.columns else None
+        df["Journal Reference"] = df["journal_ref"] if "journal_ref" in df.columns else None
+        
+        df["Matched Conferences"] = None
+        df["label"] = None # No label for new papers
+        df["source"] = "arxiv_daily_ranking"
+        
+        # Ensure all columns exist and are in correct order
+        ref_features = test_ds.features
+        
+        # Convert to Dataset to handle type casting
+        # But first ensure dataframe has all columns
+        for col in ref_features.keys():
+            if col not in df.columns:
+                df[col] = None
+                
+        # Select only relevant columns
+        df = df[list(ref_features.keys())]
+        
+        # Convert to Dataset
+        new_ds = Dataset.from_pandas(df)
+        
+        # Cast features to match reference
+        new_ds = new_ds.cast(ref_features)
+        
+        print(f"Appending {len(new_ds)} new papers to test set ({len(test_ds)} existing)...")
+        try:
+            updated_test_ds = concatenate_datasets([test_ds, new_ds])
+        except ValueError as e:
+            if "must be identical" in str(e):
+                print("Column mismatch detected during concatenation. Attempting to resolve...")
+                # Identify mismatch
+                ref_cols = set(test_ds.column_names)
+                new_cols = set(new_ds.column_names)
+                
+                # Check for __index_level_0__ specifically in features if not in column_names
+                if "__index_level_0__" not in ref_cols and "__index_level_0__" in test_ds.features:
+                     print("Found hidden __index_level_0__ in reference features. Removing...")
+                     test_ds = test_ds.remove_columns(["__index_level_0__"])
+                     ref_cols = set(test_ds.column_names)
+
+                # If test_ds has extra columns
+                extra_in_ref = ref_cols - new_cols
+                if extra_in_ref:
+                    print(f"Removing extra columns from reference dataset: {extra_in_ref}")
+                    test_ds = test_ds.remove_columns(list(extra_in_ref))
+                
+                # If new_ds has extra columns
+                extra_in_new = new_cols - ref_cols
+                if extra_in_new:
+                    print(f"Removing extra columns from new papers: {extra_in_new}")
+                    new_ds = new_ds.remove_columns(list(extra_in_new))
+                    
+                # Retry concatenation
+                updated_test_ds = concatenate_datasets([test_ds, new_ds])
+            else:
+                raise e
+        
+        # Update dataset dict
+        ds["test"] = updated_test_ds
+        
+        print(f"Pushing updated dataset to {dataset_name}...")
+        ds.push_to_hub(dataset_name)
+        print("Successfully updated reference dataset!")
+        
+    except Exception as e:
+        print(f"Error updating reference dataset: {e}")
+
+
+import re
+
+def clean_text(text):
+    """
+    Remove sentences that contain URLs or code availability phrases to prevent bias.
+    """
+    if not isinstance(text, str):
+        return ""
+        
+    # Simple sentence splitting by punctuation (.!?) followed by space or end of string
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    
+    cleaned_sentences = []
+    
+    # Regex for URLs
+    url_pattern = r'http\S+|www\.\S+|github\.com'
+    
+    # Phrases to trigger removal (case insensitive)
+    code_phrases = [
+        r'code is available',
+        r'code available',
+        r'source code',
+        r'implementation is available',
+        r'implementation available',
+        r'project page',
+        r'github'
+    ]
+    
+    for sent in sentences:
+        # Check for URL
+        if re.search(url_pattern, sent, re.IGNORECASE):
+            continue
+            
+        # Check for phrases
+        found_phrase = False
+        for phrase in code_phrases:
+            if re.search(phrase, sent, re.IGNORECASE):
+                found_phrase = True
+                break
+        
+        if found_phrase:
+            continue
+            
+        cleaned_sentences.append(sent)
+        
+    return ' '.join(cleaned_sentences)
 
 def rank_papers(df, model, tokenizer, device, config):
     """Rank papers using the Siamese model."""
@@ -264,7 +497,9 @@ def rank_papers(df, model, tokenizer, device, config):
     
     for _, row in tqdm(df.iterrows(), total=len(df), desc="Scoring"):
         # Prepare inputs
-        text = f"{row['title']} [SEP] {row['abstract']} [SEP] {row['categories']}"
+        # Clean abstract to remove URLs
+        abstract = clean_text(row['abstract'])
+        text = f"{row['title']} [SEP] {abstract} [SEP] {row['categories']}"
         encoding = tokenizer.encode_plus(
             text,
             add_special_tokens=True,
@@ -301,6 +536,8 @@ def main():
     parser = argparse.ArgumentParser(description="Rank recent arXiv preprints by novelty")
     parser.add_argument("--days", type=int, default=30, help="Number of days to look back")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing dataset instead of incremental update")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of papers to process (for testing)")
+    parser.add_argument("--skip-enrich", action="store_true", help="Skip OpenAlex author enrichment")
     args = parser.parse_args()
     
     device = get_device()
@@ -358,14 +595,49 @@ def main():
     else:
         print("Overwrite mode enabled. Ignoring existing dataset.")
 
+    # Apply limit if specified
+    if args.limit and len(unique_new_papers_df) > args.limit:
+        print(f"Limiting to {args.limit} papers.")
+        unique_new_papers_df = unique_new_papers_df.head(args.limit)
+
+    # 2.5 Enrich with OpenAlex Author Data
+    # We do this for unique_new_papers_df before embeddings/ranking so we have the data
+    # Note: This might take some time due to API rate limits
+    if not args.skip_enrich:
+        print("\n" + "="*80)
+        print("Enriching with OpenAlex Author Data")
+        print("="*80)
+        
+        # Define cache file path
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cache_path = os.path.join(project_root, "scripts", "siamese_scibert", "openalex_cache.pkl")
+        
+        unique_new_papers_df = enrich_papers_with_openalex(unique_new_papers_df, cache_file=cache_path)
+    else:
+        print("\nSkipping OpenAlex author enrichment as requested.")
+
     # 3. Generate Embeddings for NEW papers only
     unique_new_papers_df = generate_specter_embeddings(unique_new_papers_df, device)
     
-    # 4. Load Reference Dataset (Training Data)
+    # 4. Load Reference Dataset (Training Data + Test Data)
     print("Loading reference dataset for similarity...")
-    dataset_name = "JasonYan777/novelty-rank-with-similarities"
-    hf_ds = load_dataset(dataset_name, split="train")
-    ref_df = hf_ds.to_pandas()
+    dataset_name = "JasonYan777/novelty-rank-with-similarities-final"
+    # Load both splits
+    ds_dict = load_dataset(dataset_name)
+    
+    # Concatenate train and test if they exist
+    dfs = []
+    if "train" in ds_dict:
+        dfs.append(ds_dict["train"].to_pandas())
+    if "test" in ds_dict:
+        dfs.append(ds_dict["test"].to_pandas())
+        
+    if dfs:
+        ref_df = pd.concat(dfs, ignore_index=True)
+        print(f"Loaded {len(ref_df)} reference papers (train + test).")
+    else:
+        print("Warning: No reference data found in train or test splits.")
+        ref_df = pd.DataFrame()
     
     # Rename columns to match
     ref_df = ref_df.rename(columns={
@@ -415,7 +687,16 @@ def main():
             existing_df["authors"] = None
             
         # Select columns to keep for final dataset
-        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"]
+        # Add all OpenAlex columns
+        openalex_cols = [
+            "num_authors", "max_h_index", "avg_h_index", "min_h_index", 
+            "first_author_h_index", "last_author_h_index", "max_citations", 
+            "avg_citations", "total_author_citations", "max_career_stage", 
+            "avg_career_stage", "has_early_career_author", "has_senior_author", 
+            "author_diversity_score", "has_top_author"
+        ]
+        
+        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"] + openalex_cols
         
         # Ensure ranked_new_df has all columns (fill missing with None if needed)
         for col in columns_to_keep:
@@ -434,14 +715,20 @@ def main():
         # Concatenate
         final_df = pd.concat([ranked_new_df_clean, existing_df_clean], ignore_index=True)
     else:
-        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"]
+        openalex_cols = [
+            "num_authors", "max_h_index", "avg_h_index", "min_h_index", 
+            "first_author_h_index", "last_author_h_index", "max_citations", 
+            "avg_citations", "total_author_citations", "max_career_stage", 
+            "avg_career_stage", "has_early_career_author", "has_senior_author", 
+            "author_diversity_score", "has_top_author"
+        ]
+        columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"] + openalex_cols
         for col in columns_to_keep:
             if col not in ranked_new_df.columns:
                 ranked_new_df[col] = None
         final_df = ranked_new_df[columns_to_keep].copy()
         
-    # Sort final df by published date (descending) and then score? Or just score?
-    # Usually users want recent stuff. Let's sort by published date desc.
+    # Sort final df by published date (descending)
     final_df["published"] = pd.to_datetime(final_df["published"])
     final_df = final_df.sort_values("published", ascending=False)
     # Convert back to string for HF
@@ -472,6 +759,9 @@ def main():
         
     except Exception as e:
         print(f"Error pushing to Hugging Face: {e}")
+
+    # 9. Update Reference Dataset
+    # update_reference_dataset(ranked_new_df)
 
 if __name__ == "__main__":
     main()
