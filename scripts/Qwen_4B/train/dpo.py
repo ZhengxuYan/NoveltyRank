@@ -38,7 +38,7 @@ class NoveltyDPOConfig:
     This acts as the hyperparameter definition.
     """
     # Core Model settings
-    model_name: str = "tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/weights/final"
+    model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     reference_model_name: Optional[str] = None  # If None, uses model_name (weights frozen)
     
     # Checkpointing

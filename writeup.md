@@ -59,21 +59,19 @@ Despite the 235B model’s size advantage, its classification accuracy lags the 
 
 ## Category Focus: CS_CV
 - **SFT**
-	- Result dir: `results/noveltyrank_sft_qwen4b_cv`
-	- Fnial Sampler: `tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/sampler_weights/final`
-	- Test metrics (limit 500, T=0.0): accuracy 0.758, precision 0.255, recall 0.149, F1 0.188
+	- Result dir: `results/sft_cv`
+	- Fnial Sampler: `tinker://b134fa47-0ac6-57bc-b8c7-9cf138a3ecaa:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.776, precision 0.350, recall 0.223, F1 0.273
 - **Classification-DPO**
-	- Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv`
-	- Final sampler: `tinker://e88323f5-71b3-5a81-a7e8-29e34c7ff873:train:0/sampler_weights/final`
-  - Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.254, recall 0.298, F1 0.275
-  
+	- Result dir: `results/dpo_classification_cv`
+	- Final sampler: `tinker://61ef747f-c41d-5587-a754-771e2b1e114e:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): <>
 - **SFT + DPO**
-  - Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv_sft`
-  - Best sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/000060`
-  - Test metrics (limit 500, T=0.0): accuracy 0.742, precision 0.246, recall 0.208, F1 0.225
-
+  - Result dir: `results/dpo_classification_cv_sftinit`
+  - Best sampler: `tinker://ff01d0b0-c39e-57f6-ba9d-552f229feb97:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): <>
 - **Comparison-DPO**
-	- Result dir: `results/noveltyrank_dpo_qwen4b_comparison_cs_cv`
+	- Result dir: `results/dpo_comparison_cv`
   - Final sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/final`
   - Test metrics (limit 500, T=0.0): accuracy 0.598
 
@@ -153,11 +151,11 @@ We extract the top-K similar papers from arXiv for each target example in the da
   - Final sampler: `tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/sampler_weights/final`
   - Test metrics (limit 500, T=0.0): accuracy 0.792, precision 0.414, recall 0.315, F1 0.358
 - **Classification-DPO (lr=5e-4)**
-  - Result dir: `results/new_model_dpo_cv_v3`
+  - Result dir: `results/new_model_dpo_cv`
   - Final sampler: `tinker://ad85b617-2ed7-5dde-b0f7-9302423902a0:train:0/sampler_weights/final`
   - Test metrics (limit 500, T=0.0): accuracy 0.568, precision 0.310, recall 0.338, F1 0.324, unresolved 124/500
 - **SFT + DPO**
-  - Result dir: `results/new_model_dpo_cv_v1`
+  - Result dir: `results/new_model_dpo_cv_sftinit`
   - Best sampler: `tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/sampler_weights/000310`
   - Test metrics (limit 500, T=0.0): accuracy 0.782, precision 0.384, recall 0.304, F1 0.339
 

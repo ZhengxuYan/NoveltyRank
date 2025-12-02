@@ -107,34 +107,57 @@ This creates both classification and proximity embeddings for each paper.
 
 ### 3. Computing Similarities
 
-Calculate paper similarities using FAISS:
+**Step 1 – Build the FAISS index**
 
 ```bash
 python similarity.py
 ```
 
-Outputs include top-10 similar papers with scores for each paper in the dataset.
+- Writes FAISS indices and caches per category.
+- Emits the top-10 similar papers (and cosine scores) for every paper.
+
+**Step 2 – Materialize similarity-aware SFT caches (optional)**
+
+```bash
+python embedding/simliarity_report/generate_similarity_reports.py \
+   --split-root data_cache/categories/CS_CV/sft \
+   --output-root data_cache/similiarity_aware_categories/CS_CV/sft \
+   --preview-prompts 1 \
+   --preview-outputs 1
+```
+
+- Scans the cached cs.CV SFT splits under `--split-root`.
+- Writes augmented train/test JSONL files to the mirrored path under `--output-root`.
+- Previews a single prompt/output pair so you can sanity-check the summaries.
+
+Pass `include_similarity_report=true` to the SFT or DPO scripts to inject these summaries into downstream prompts.
+
 
 ### 4. Model Training
 
 #### Qwen3-4B Fine-Tuning
-
-```bash
-python scripts/Qwen_4B/train/sft.py
-```
-
-
-Common invocations:
+Launch supervised fine-tuning (SFT) runs with the following commands:
 
 ```bash
 # Whole-dataset SFT (default)
-python scripts/Qwen_4B/train/sft.py
+python scripts/Qwen_4B/train/sft.py \
+   log_path=results/sft_whole \
+   wandb_name=sft_whole
 
 # Category-specific SFT (example: cs.CV)
-python scripts/Qwen_4B/train/sft.py category=cs.CV category_seed=42
+python scripts/Qwen_4B/train/sft.py \
+   category=cs.CV \
+   category_seed=42 \
+   log_path=results/sft_cv \
+   wandb_name=sft_cv
 
 # Enable similarity-conditioned prompts
-python scripts/Qwen_4B/train/sft.py include_similarity_report=true
+python scripts/Qwen_4B/train/sft.py \
+   category=cs.CV \
+   category_seed=42 \
+   log_path=results/sft_cv_sim \
+   wandb_name=sft_cv_sim \
+   include_similarity_report=true
 ```
 
 If the script detects an existing log directory it will ask whether to delete, resume, or exit. Respond at the prompt to control the behavior.
@@ -143,35 +166,53 @@ If you want to customize hyperparameters, you can modify the `build_config` func
 `scripts/Qwen_4B/train/sft.py`.
 
 #### Qwen3-4B DPO Training
-Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypoint. When using a Tinker checkpoint URI for `model_name`, set `env_config.renderer_name=qwen3_instruct` to skip autodetection.
+Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypoint. When either `model_name` or `env_config.load_checkpoint_path` references a Tinker URI, add `env_config.renderer_name=qwen3_instruct` so the script skips renderer autodetection (which otherwise fails on Tinker IDs). For warm starts, always point `env_config.load_checkpoint_path` at the `…/weights/final` artifact rather than `…/sampler_weights/final`.
 
 ```bash
 # Whole-dataset classification DPO
 python scripts/Qwen_4B/train/dpo.py \
    env_config.dpo_mode=classification \
-   env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
-   env_config.wandb_name=DPO_qwen_4b_classification
-
-# Include similarity reports during classification DPO
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=classification \
-   env_config.include_similarity_report=true
+   env_config.log_path=results/dpo_classification_whole \
+   env_config.wandb_name=dpo_classification_whole
 
 # Category-specific classification DPO (cs.CV)
 python scripts/Qwen_4B/train/dpo.py \
    env_config.dpo_mode=classification \
    env_config.category=cs.CV \
-   env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
-   env_config.log_path=results/noveltyrank_dpo_qwen4b_classification_cs_cv \
-   env_config.wandb_name=DPO_qwen_4b_classification_cs_cv
+   env_config.log_path=results/dpo_classification_cv \
+   env_config.wandb_name=dpo_classification_cv
+
+# Resume legacy classification DPO (cs.CV) from an SFT checkpoint
+python scripts/Qwen_4B/train/dpo.py \
+   env_config.dpo_mode=classification \
+   env_config.category=CS_CV \
+   env_config.load_checkpoint_path=tinker://b134fa47-0ac6-57bc-b8c7-9cf138a3ecaa:train:0/weights/final \
+   env_config.log_path=results/dpo_classification_cv_sftinit \
+   env_config.wandb_name=dpo_classification_cv_sftinit 
+
+# Include similarity reports during classification DPO(cs.CV)
+python scripts/Qwen_4B/train/dpo.py \
+   env_config.dpo_mode=classification \
+   env_config.category=cs.CV \
+   env_config.log_path=results/dpo_classification_cv_sim \
+   env_config.wandb_name=dpo_classification_cv_sim \
+   env_config.include_similarity_report=true
+
+# Include similarity reports during classification DPO (load from SFT, cs.CV)
+python scripts/Qwen_4B/train/dpo.py \
+   env_config.dpo_mode=classification \
+   env_config.category=cs.CV \
+   env_config.load_checkpoint_path=tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/weights/final \
+   env_config.log_path=results/dpo_classification_cv_sftinit_sim \
+   env_config.wandb_name=dpo_classification_cv_sftinit_sim \
+   env_config.include_similarity_report=true
 
 # Category-specific comparison DPO (cs.CV)
 python scripts/Qwen_4B/train/dpo.py \
    env_config.dpo_mode=comparison \
    env_config.category=cs.CV \
-   env_config.model_name=Qwen/Qwen3-4B-Instruct-2507 \
-   env_config.log_path=results/noveltyrank_dpo_qwen4b_comparison_cs_cv \
-   env_config.wandb_name=DPO_qwen_4b_comparison_cs_cv
+   env_config.log_path=results/dpo_comparison_cv \
+   env_config.wandb_name=dpo_comparison_cv
 ```
 
 All runs write checkpoints and W&B logs into the specified `log_path`. Use unique directories when launching multiple experiments in parallel.
@@ -188,9 +229,7 @@ Quickly sanity-check the latest checkpoints with the lightweight evaluation scri
 # Classification accuracy on cs.CV split
 python scripts/Qwen_4B/test/test_classification.py \
    --category CS_CV \
-   --model-name Qwen/Qwen3-4B-Instruct-2507 \
-   --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final \
-   --temperature 0.0
+   --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final
 
 # Pairwise comparison accuracy on cs.CV split
 python scripts/Qwen_4B/test/test_comparison.py \

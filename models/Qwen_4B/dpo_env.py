@@ -284,6 +284,7 @@ class NoveltyRankDatasetLoader(ChatDatasetBuilder):
     category_seed: Optional[int] = None
     train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR
     test_cache_path: str = DEFAULT_TEST_CACHE_DIR
+    include_similarity_report: bool = False
 
     def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
         need_classification = self.dpo_mode == CLASSIFICATION_MODE

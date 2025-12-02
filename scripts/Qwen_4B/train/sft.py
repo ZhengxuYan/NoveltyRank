@@ -91,14 +91,22 @@ async def main(
     category: str = WHOLE_DATASET,
     category_seed: int | None = None,
     include_similarity_report: bool = False,
+    log_path: str | None = None,
+    wandb_name: str | None = None,
 ):
     load_dotenv()
     # chz.entrypoint automatically handles configuration parsing before calling main
-    config = build_config(
+    config_kwargs = dict(
         category=category,
         category_seed=category_seed,
         include_similarity_report=include_similarity_report,
     )
+    if log_path is not None:
+        config_kwargs["log_path"] = log_path
+    if wandb_name is not None:
+        config_kwargs["wandb_name"] = wandb_name
+
+    config = build_config(**config_kwargs)
     cli_utils.check_log_dir(config.log_path, behavior_if_exists="ask")
     await train.main(config) 
 

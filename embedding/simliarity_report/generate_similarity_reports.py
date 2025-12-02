@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from datasets import Dataset, load_dataset, load_from_disk
 from dotenv import load_dotenv
@@ -197,6 +197,11 @@ def slice_dataset(dataset: Dataset, offset: int, limit: Optional[int]) -> Datase
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate similarity reports using Qwen3 via Tinker")
     parser.add_argument(
+        "--split-root",
+        default=None,
+        help="Root directory containing per-split subdirectories (e.g., train/test). When provided, individual --train-split/--output-dir arguments are ignored and reports will be generated for each detected split.",
+    )
+    parser.add_argument(
         "--train-split",
         default="data_cache/categories/CS_CV/sft/train",
         help="Path to the target split saved with HuggingFace datasets",
@@ -210,6 +215,11 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         default="data_cache/similiarity_aware_categories/CS_CV/sft/train",
         help="Directory to save the enriched dataset",
+    )
+    parser.add_argument(
+        "--output-root",
+        default=None,
+        help="Root directory to store generated splits when --split-root is supplied. Defaults to mirroring --split-root under a similiarity-aware directory.",
     )
     parser.add_argument("--offset", type=int, default=0, help="Start index within the dataset")
     parser.add_argument(
@@ -234,13 +244,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=2048,
+        default=4096,
         help="Maximum number of new tokens in the generated report",
     )
     parser.add_argument(
         "--max-concurrency",
         type=int,
-        default=2,
+        default=5000,
         help="Maximum number of concurrent generation requests",
     )
     parser.add_argument(
@@ -290,21 +300,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-async def async_main(args: argparse.Namespace) -> None:
+async def async_main(
+    args: argparse.Namespace,
+    train_split: str,
+    test_split: Optional[str],
+    output_dir: str,
+    extra_metadata_splits: Optional[Iterable[str]] = None,
+) -> None:
     logging.basicConfig(level=getattr(logging, args.log_level), format="%(asctime)s - %(levelname)s - %(message)s")
 
-    logger.info("Loading base dataset from %s", args.train_split)
-    base_dataset = load_from_disk(args.train_split)
+    logger.info("Loading base dataset from %s", train_split)
+    base_dataset = load_from_disk(train_split)
     target_dataset = slice_dataset(base_dataset, args.offset, args.limit)
     if len(target_dataset) == 0:
         logger.warning("No records to process (offset=%d, limit=%s)", args.offset, str(args.limit))
         return
     logger.info("Prepared dataset with %d records", len(target_dataset))
 
-    extra_splits = args.extra_metadata_split or [
+    default_metadata = [
         "data_cache/whole_dataset/train_sft_data/train_split_cleaned",
         "data_cache/whole_dataset/test_sft_data/test_split_cleaned",
     ]
+    extra_splits: List[str] = []
+    if extra_metadata_splits:
+        extra_splits.extend(extra_metadata_splits)
+    elif args.extra_metadata_split:
+        extra_splits.extend(args.extra_metadata_split)
+    else:
+        extra_splits.extend(default_metadata)
 
     original_paths = ensure_original_dataset(
         dataset_name=args.original_dataset,
@@ -313,7 +336,7 @@ async def async_main(args: argparse.Namespace) -> None:
     )
 
     metadata_roots: List[str] = []
-    for path in [args.train_split, args.test_split, *extra_splits, *original_paths]:
+    for path in [train_split, test_split, *extra_splits, *original_paths]:
         if not path:
             continue
         abs_path = os.path.abspath(path)
@@ -346,14 +369,83 @@ async def async_main(args: argparse.Namespace) -> None:
     )
 
     enriched_dataset = Dataset.from_list(results)
-    os.makedirs(args.output_dir, exist_ok=True)
-    logger.info("Saving enriched dataset with %d entries to %s", len(enriched_dataset), args.output_dir)
-    enriched_dataset.save_to_disk(args.output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info("Saving enriched dataset with %d entries to %s", len(enriched_dataset), output_dir)
+    enriched_dataset.save_to_disk(output_dir)
+
+
+def _derive_default_output_root(split_root: str) -> str:
+    split_root = os.path.abspath(split_root)
+    parts = split_root.split(os.sep)
+    derived_parts = parts.copy()
+    try:
+        categories_idx = derived_parts.index("categories")
+        derived_parts[categories_idx] = "similiarity_aware_categories"
+    except ValueError:
+        derived_parts.append("similarity_reports")
+    return os.sep.join(derived_parts)
+
+
+def _enumerate_split_dirs(split_root: str) -> List[Tuple[str, str]]:
+    split_root = os.path.abspath(split_root)
+    if not os.path.isdir(split_root):
+        raise FileNotFoundError(f"split-root directory '{split_root}' does not exist")
+    entries: List[Tuple[str, str]] = []
+    for name in sorted(os.listdir(split_root)):
+        candidate = os.path.join(split_root, name)
+        if os.path.isdir(candidate):
+            entries.append((name, candidate))
+    if not entries:
+        raise RuntimeError(f"No subdirectories found under split-root '{split_root}'")
+    return entries
+
+
+def _pick_secondary_split(split_dirs: List[Tuple[str, str]], primary_name: str) -> Optional[str]:
+    for name, path in split_dirs:
+        if name == "test" and name != primary_name:
+            return path
+    for name, path in split_dirs:
+        if name != primary_name:
+            return path
+    return None
 
 
 def main() -> None:
     args = parse_args()
-    asyncio.run(async_main(args))
+    if args.split_root:
+        split_dirs = _enumerate_split_dirs(args.split_root)
+        output_root = os.path.abspath(args.output_root) if args.output_root else _derive_default_output_root(args.split_root)
+        os.makedirs(output_root, exist_ok=True)
+
+        additional_metadata = set(args.extra_metadata_split or [])
+        for _, path in split_dirs:
+            additional_metadata.add(path)
+
+        for split_name, split_path in split_dirs:
+            logger.info("Processing split '%s' from %s", split_name, split_path)
+            target_output = os.path.join(output_root, split_name)
+            metadata_splits = list(additional_metadata - {split_path})
+            test_split = _pick_secondary_split(split_dirs, split_name)
+            asyncio.run(
+                async_main(
+                    args,
+                    train_split=split_path,
+                    test_split=test_split,
+                    output_dir=target_output,
+                    extra_metadata_splits=metadata_splits,
+                )
+            )
+        return
+
+    asyncio.run(
+        async_main(
+            args,
+            train_split=args.train_split,
+            test_split=args.test_split,
+            output_dir=args.output_dir,
+            extra_metadata_splits=args.extra_metadata_split,
+        )
+    )
 
 
 if __name__ == "__main__":
