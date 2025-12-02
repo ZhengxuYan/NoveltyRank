@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { fetchAllPapers } from "@/lib/data";
 import PaperRow from "@/components/PaperRow";
+import AffiliationRow from "@/components/AffiliationRow";
 import Filters from "@/components/Filters";
 import {
   Loader2,
@@ -11,6 +12,7 @@ import {
   TrendingUp,
   Layers,
   GraduationCap,
+  Building2,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -32,6 +34,7 @@ export default function Home() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [filters, setFilters] = useState({ category: "All", days: 30 });
   const [searchQuery, setSearchQuery] = useState("");
+  const [viewMode, setViewMode] = useState("papers"); // "papers" or "affiliations"
   const [currentPage, setCurrentPage] = useState(1);
   const [statusMsg, setStatusMsg] = useState("");
 
@@ -65,36 +68,36 @@ export default function Home() {
   const calculateRanks = (allPapers) => {
     // Group by category
     const byCategory = {};
-    allPapers.forEach(p => {
+    allPapers.forEach((p) => {
       if (!p.primary_category) return;
-      const cat = p.primary_category; 
+      const cat = p.primary_category;
       if (!byCategory[cat]) byCategory[cat] = [];
       byCategory[cat].push(p);
     });
 
     // Sort and assign ranks
     const paperMap = new Map();
-    
-    Object.keys(byCategory).forEach(cat => {
+
+    Object.keys(byCategory).forEach((cat) => {
       // Sort by novelty score descending
       byCategory[cat].sort((a, b) => b.novelty_score - a.novelty_score);
-      
+
       const total = byCategory[cat].length;
       byCategory[cat].forEach((p, index) => {
         const rank = index + 1;
         const percentile = ((1 - (rank - 1) / total) * 100).toFixed(1);
-        
+
         paperMap.set(p.arxiv_id, {
           ...p,
           category_rank: rank,
           category_total: total,
-          percentile: percentile
+          percentile: percentile,
         });
       });
     });
 
     // Return papers in original order (mapped)
-    return allPapers.map(p => paperMap.get(p.arxiv_id) || p);
+    return allPapers.map((p) => paperMap.get(p.arxiv_id) || p);
   };
 
   // 1. Time Filter & Ranking
@@ -112,8 +115,8 @@ export default function Home() {
     return calculateRanks(result);
   }, [papers, filters.days]);
 
-  // 2. Category & Search Filter
-  const baseFilteredPapers = useMemo(() => {
+  // 2. Category Filter (NO SEARCH) - Used for Global Ranking
+  const categoryFilteredPapers = useMemo(() => {
     let result = rankedPapers;
 
     // Filter by Primary Category if not "All"
@@ -124,7 +127,16 @@ export default function Home() {
       );
     }
 
-    // Search
+    // Sort by Novelty Score
+    result.sort((a, b) => b.novelty_score - a.novelty_score);
+
+    return result;
+  }, [rankedPapers, filters.category]);
+
+  // 3. Search Filter - Used for Display
+  const searchFilteredPapers = useMemo(() => {
+    let result = categoryFilteredPapers;
+
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
       result = result.filter((p) => {
@@ -132,30 +144,119 @@ export default function Home() {
         const abstractMatch = p.abstract?.toLowerCase().includes(query);
         const authorMatch = p.authors?.toLowerCase().includes(query);
         const idMatch = p.arxiv_id?.toLowerCase().includes(query);
-        return titleMatch || abstractMatch || authorMatch || idMatch;
+        const affMatch = p.author_affiliations?.toLowerCase().includes(query);
+        return (
+          titleMatch || abstractMatch || authorMatch || idMatch || affMatch
+        );
       });
     }
 
-    // Sort by Novelty Score
-    result.sort((a, b) => b.novelty_score - a.novelty_score);
-
     return result;
-  }, [rankedPapers, filters.category, searchQuery]);
+  }, [categoryFilteredPapers, searchQuery]);
+
+  // 4. Affiliation Aggregation Logic
+  const affiliationData = useMemo(() => {
+    if (viewMode !== "affiliations") return [];
+
+    const affMap = new Map();
+
+    // Use categoryFilteredPapers to calculate GLOBAL RANKS (before search)
+    categoryFilteredPapers.forEach((p) => {
+      if (!p.author_affiliations) return;
+
+      const affs = p.author_affiliations
+        .split(";")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const uniqueAffs = [...new Set(affs)]; // Count each paper only once per affiliation
+
+      uniqueAffs.forEach((affName) => {
+        if (!affMap.has(affName)) {
+          affMap.set(affName, {
+            name: affName,
+            papers: [],
+            topAuthorCount: 0,
+          });
+        }
+
+        const entry = affMap.get(affName);
+        entry.papers.push(p);
+        if (
+          p.has_top_author === true ||
+          String(p.has_top_author).toLowerCase() === "true"
+        ) {
+          entry.topAuthorCount += 1;
+        }
+      });
+    });
+
+    // Process stats
+    let results = Array.from(affMap.values()).map((entry) => {
+      // Sort papers by novelty score descending
+      const sortedPapers = entry.papers.sort(
+        (a, b) => b.novelty_score - a.novelty_score
+      );
+      
+      // Take top 10 papers (or all if less than 10)
+      const topPapers = sortedPapers.slice(0, 10);
+      
+      // Calculate sum of top 10 papers
+      const top10Sum = topPapers.reduce((sum, p) => sum + p.novelty_score, 0);
+
+      return {
+        name: entry.name,
+        paperCount: entry.papers.length,
+        top10Sum: top10Sum,
+        topAuthorCount: entry.topAuthorCount,
+        // Store top papers for display
+        topPapers: topPapers,
+        // Keep all papers if needed for other purposes, but UI will use topPapers
+        allPapers: sortedPapers, 
+      };
+    });
+
+    // REMOVED Filter: > 5 papers logic
+    results = results.filter((r) => r.paperCount > 2);
+
+    // Sort by Top 10 Sum Descending (GLOBAL RANKING)
+    results.sort((a, b) => b.top10Sum - a.top10Sum);
+
+    // Add Global Rank and Percentile
+    const totalAffiliations = results.length;
+    results = results.map((aff, index) => {
+      const rank = index + 1;
+      // Percentile: Top X% (lower is better, e.g. Rank 1 is Top 0.1%)
+      const percentile = ((rank / totalAffiliations) * 100).toFixed(1);
+      return {
+        ...aff,
+        rank,
+        percentile,
+      };
+    });
+
+    // STRICT SEARCH FILTER FOR AFFILIATION NAMES (After Ranking)
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      results = results.filter((r) => r.name.toLowerCase().includes(query));
+    }
+
+    return results;
+  }, [categoryFilteredPapers, viewMode, searchQuery]);
 
   // Specific Category List (when category is NOT All)
   const categoryPapers = useMemo(() => {
     if (filters.category === "All") return [];
-    return baseFilteredPapers.filter(
+    return searchFilteredPapers.filter(
       (p) => p.primary_category && p.primary_category.includes(filters.category)
     );
-  }, [baseFilteredPapers, filters.category]);
+  }, [searchFilteredPapers, filters.category]);
 
   // Dashboard Data (when category IS All)
   const dashboardData = useMemo(() => {
     if (filters.category !== "All") return null;
 
     return DISPLAY_CATEGORIES.map((cat) => {
-      const allCatPapers = baseFilteredPapers.filter(
+      const allCatPapers = searchFilteredPapers.filter(
         (p) => p.primary_category && p.primary_category.includes(cat.value)
       );
       const topPapers = allCatPapers.slice(0, 20); // Top 20 for dashboard
@@ -167,18 +268,20 @@ export default function Home() {
         count: allCatPapers.length,
       };
     }).sort((a, b) => b.count - a.count); // Sort categories by paper count (descending)
-  }, [baseFilteredPapers, filters.category, t]);
+  }, [searchFilteredPapers, filters.category, t]);
 
-  // Pagination Logic (only for single category view)
-  const totalPages = Math.ceil(categoryPapers.length / ITEMS_PER_PAGE);
-  const paginatedPapers = categoryPapers.slice(
+  // Pagination Logic (only for single category view OR affiliation view)
+  const currentList =
+    viewMode === "affiliations" ? affiliationData : categoryPapers;
+  const totalPages = Math.ceil(currentList.length / ITEMS_PER_PAGE);
+  const paginatedItems = currentList.slice(
     (currentPage - 1) * ITEMS_PER_PAGE,
     currentPage * ITEMS_PER_PAGE
   );
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters, searchQuery]);
+  }, [filters, searchQuery, viewMode]);
 
   const handleFilterChange = (newFilters) => {
     setFilters(newFilters);
@@ -186,6 +289,10 @@ export default function Home() {
 
   const handleSearch = (query) => {
     setSearchQuery(query);
+  };
+
+  const handleViewModeChange = (mode) => {
+    setViewMode(mode);
   };
 
   return (
@@ -210,7 +317,12 @@ export default function Home() {
         </div>
 
         {/* Filters & Search */}
-        <Filters onFilterChange={handleFilterChange} onSearch={handleSearch} />
+        <Filters
+          onFilterChange={handleFilterChange}
+          onSearch={handleSearch}
+          onViewModeChange={handleViewModeChange}
+          viewMode={viewMode}
+        />
 
         {/* Loading State */}
         {loading && papers.length === 0 && (
@@ -225,8 +337,69 @@ export default function Home() {
         {/* Main Content */}
         {!loading && (
           <>
-            {/* Case 1: Overall Dashboard (Multiple Lists) */}
-            {filters.category === "All" ? (
+            {/* CASE 1: AFFILIATION LEADERBOARD */}
+            {viewMode === "affiliations" ? (
+              <>
+                <div className="flex items-center justify-between mb-4 px-2">
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-indigo-400" />
+                    <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">
+                      Top Affiliations by Novelty
+                    </h2>
+                    <span className="text-slate-600 text-sm font-medium ml-2">
+                      {affiliationData.length} institutions
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl shadow-black/50 ring-1 ring-white/5 animate-in fade-in duration-300">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse table-fixed">
+                      <thead>
+                        <tr className="bg-slate-900/50 border-b border-slate-800">
+                          <th className="w-24 py-4 pl-6 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">
+                            {t.dashboard.table.rank}
+                          </th>
+                          <th className="py-4 text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                            Institution
+                          </th>
+                          <th className="w-32 py-4 pr-6 text-xs font-semibold text-slate-500 uppercase tracking-wider text-right">
+                            Top 10 Score
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/50">
+                        {paginatedItems.length > 0 ? (
+                          paginatedItems.map((aff, index) => (
+                            <AffiliationRow
+                              key={aff.name}
+                              affiliation={aff}
+                              rank={aff.rank} // Global Rank
+                              isSearching={!!searchQuery.trim()}
+                            />
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan="3" className="px-6 py-24 text-center">
+                              <div className="flex flex-col items-center justify-center">
+                                <p className="text-slate-400 text-lg font-medium mb-2">
+                                  No affiliations found
+                                </p>
+                                <p className="text-slate-500 text-sm">
+                                  Try adjusting your filters (min 5 papers
+                                  required)
+                                </p>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            ) : /* Case 2: Overall Dashboard (Multiple Lists) - ONLY if filters.category === "All" */
+            filters.category === "All" ? (
               <div className="space-y-8">
                 <div className="flex items-center justify-between px-2">
                   <div className="flex items-center gap-2">
@@ -272,7 +445,7 @@ export default function Home() {
                       </div>
 
                       <div className="overflow-y-auto flex-1 custom-scrollbar">
-                        <table className="w-full text-left relative">
+                        <table className="w-full text-left relative table-fixed">
                           <thead className="sticky top-0 bg-slate-900 z-10 text-xs font-semibold text-slate-500 uppercase tracking-wider border-b border-slate-800 shadow-sm">
                             <tr>
                               <th className="py-2 pl-4 text-center w-12 bg-slate-900">
@@ -311,7 +484,7 @@ export default function Home() {
                 </div>
               </div>
             ) : (
-              /* Case 2: Single Category List (Full View) */
+              /* Case 3: Single Category List (Full View) */
               <>
                 <div className="flex items-center justify-between mb-4 px-2">
                   <div className="flex items-center gap-2">
@@ -342,7 +515,7 @@ export default function Home() {
                   className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl shadow-black/50 ring-1 ring-white/5 animate-in fade-in duration-300"
                 >
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
+                    <table className="w-full text-left border-collapse table-fixed">
                       <thead>
                         <tr className="bg-slate-900/50 border-b border-slate-800">
                           <th className="w-16 py-4 pl-6 text-xs font-semibold text-slate-500 uppercase tracking-wider text-center">
@@ -357,8 +530,8 @@ export default function Home() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/50">
-                        {paginatedPapers.length > 0 ? (
-                          paginatedPapers.map((paper, index) => (
+                        {paginatedItems.length > 0 ? (
+                          paginatedItems.map((paper, index) => (
                             <PaperRow
                               key={paper.arxiv_id}
                               paper={paper}
@@ -385,36 +558,37 @@ export default function Home() {
                     </table>
                   </div>
                 </div>
-
-                {/* Pagination Controls */}
-                {categoryPapers.length > 0 && (
-                  <div className="flex items-center justify-center gap-4 mt-8">
-                    <button
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={currentPage === 1}
-                      className="p-2.5 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition-all text-slate-400 border border-transparent hover:border-slate-700"
-                    >
-                      <ChevronLeft className="w-5 h-5" />
-                    </button>
-
-                    <span className="text-sm text-slate-400 font-medium font-mono bg-slate-900 px-4 py-2 rounded-lg border border-slate-800">
-                      {t.dashboard.pagination.page} {currentPage}{" "}
-                      <span className="text-slate-600">/</span> {totalPages}
-                    </span>
-
-                    <button
-                      onClick={() =>
-                        setCurrentPage((p) => Math.min(totalPages, p + 1))
-                      }
-                      disabled={currentPage === totalPages}
-                      className="p-2.5 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition-all text-slate-400 border border-transparent hover:border-slate-700"
-                    >
-                      <ChevronRight className="w-5 h-5" />
-                    </button>
-                  </div>
-                )}
               </>
             )}
+
+            {/* Common Pagination for Case 1 (Affiliation) and Case 3 (Single Category) */}
+            {(viewMode === "affiliations" || filters.category !== "All") &&
+              paginatedItems.length > 0 && (
+                <div className="flex items-center justify-center gap-4 mt-8">
+                  <button
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                    className="p-2.5 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition-all text-slate-400 border border-transparent hover:border-slate-700"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+
+                  <span className="text-sm text-slate-400 font-medium font-mono bg-slate-900 px-4 py-2 rounded-lg border border-slate-800">
+                    {t.dashboard.pagination.page} {currentPage}{" "}
+                    <span className="text-slate-600">/</span> {totalPages}
+                  </span>
+
+                  <button
+                    onClick={() =>
+                      setCurrentPage((p) => Math.min(totalPages, p + 1))
+                    }
+                    disabled={currentPage === totalPages}
+                    className="p-2.5 rounded-lg hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent transition-all text-slate-400 border border-transparent hover:border-slate-700"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </div>
+              )}
           </>
         )}
       </div>

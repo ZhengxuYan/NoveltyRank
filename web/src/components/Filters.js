@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { Search, Calendar, ChevronDown } from 'lucide-react';
+import { Search, Calendar, ChevronDown, FileText, Building2 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 const CATEGORIES = [
@@ -20,7 +20,7 @@ const TIME_FRAMES = [
   { labelKey: "all", value: 3650 },
 ];
 
-export default function Filters({ onFilterChange, onSearch }) {
+export default function Filters({ onFilterChange, onSearch, onViewModeChange, viewMode = 'papers' }) {
   const { t } = useLanguage();
   const [activeCategory, setActiveCategory] = useState("All");
   const [activeDays, setActiveDays] = useState(30);
@@ -44,21 +44,49 @@ export default function Filters({ onFilterChange, onSearch }) {
 
   return (
     <div className="flex flex-col gap-6 mb-8">
-      {/* 1. Search Bar (Separate Row) */}
-      <div className="relative w-full">
-        <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-          <Search className="h-4 w-4 text-slate-500" />
+      <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center">
+        {/* 1. View Mode Toggle (New) */}
+        <div className="flex p-1 bg-slate-900/50 border border-slate-800 rounded-xl backdrop-blur-sm self-start">
+          <button
+            onClick={() => onViewModeChange('papers')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              viewMode === 'papers'
+                ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            {t.filters.viewMode?.papers || "Papers"}
+          </button>
+          <button
+            onClick={() => onViewModeChange('affiliations')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+              viewMode === 'affiliations'
+                ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Building2 className="w-4 h-4" />
+            {t.filters.viewMode?.affiliations || "Affiliations"}
+          </button>
         </div>
-        <input
-          type="text"
-          placeholder={t.filters.searchPlaceholder}
-          value={searchQuery}
-          onChange={handleSearchChange}
-          className="w-full pl-11 pr-4 py-3 bg-slate-900/50 border border-slate-800/50 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all backdrop-blur-sm"
-        />
+
+        {/* 2. Search Bar */}
+        <div className="relative w-full md:max-w-md">
+          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+            <Search className="h-4 w-4 text-slate-500" />
+          </div>
+          <input
+            type="text"
+            placeholder={t.filters.searchPlaceholder || "Search papers, authors, IDs, or affiliations..."}
+            value={searchQuery}
+            onChange={handleSearchChange}
+            className="w-full pl-11 pr-4 py-2.5 bg-slate-900/50 border border-slate-800/50 rounded-xl text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500/50 transition-all backdrop-blur-sm"
+          />
+        </div>
       </div>
 
-      {/* 2. Ranking Controls: Categories & Time Frame */}
+      {/* 3. Ranking Controls: Categories & Time Frame */}
       <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4 border-b border-slate-800 pb-1">
         
         {/* Category Tabs */}

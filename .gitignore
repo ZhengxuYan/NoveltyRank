@@ -3,6 +3,9 @@
 
 *.sh
 
+*.jsonl
+*.tar.gz
+
 # Python Virtual Environments
 scrapyenv/
 venv/

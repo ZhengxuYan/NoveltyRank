@@ -538,6 +538,7 @@ def main():
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing dataset instead of incremental update")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of papers to process (for testing)")
     parser.add_argument("--skip-enrich", action="store_true", help="Skip OpenAlex author enrichment")
+    parser.add_argument("--no-push", action="store_true", help="Do not push results to Hugging Face (dry run)")
     args = parser.parse_args()
     
     device = get_device()
@@ -693,7 +694,13 @@ def main():
             "first_author_h_index", "last_author_h_index", "max_citations", 
             "avg_citations", "total_author_citations", "max_career_stage", 
             "avg_career_stage", "has_early_career_author", "has_senior_author", 
-            "author_diversity_score", "has_top_author"
+            "author_diversity_score", "has_top_author",
+            "author_affiliations", "author_ids", "author_names",
+            "author_orcids", "author_h_indices", "author_i10_indices",
+            "author_citation_counts", "author_paper_counts", "author_two_year_citedness",
+            "author_years_active", "author_first_pub_years", "author_last_pub_years",
+            "author_career_stages", "author_recent_productivity",
+            "author_avg_citations_per_paper", "author_max_paper_citations"
         ]
         
         columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"] + openalex_cols
@@ -720,7 +727,8 @@ def main():
             "first_author_h_index", "last_author_h_index", "max_citations", 
             "avg_citations", "total_author_citations", "max_career_stage", 
             "avg_career_stage", "has_early_career_author", "has_senior_author", 
-            "author_diversity_score", "has_top_author"
+            "author_diversity_score", "has_top_author",
+            "author_affiliations", "author_ids", "author_names"
         ]
         columns_to_keep = ["title", "abstract", "categories", "primary_category", "published", "arxiv_id", "url", "novelty_score", "max_similarity", "avg_similarity", "is_accepted", "acceptance_details", "authors"] + openalex_cols
         for col in columns_to_keep:
@@ -750,18 +758,22 @@ def main():
     print(f"\nFull updated results saved to {output_file}")
     
     # 8. Push to Hugging Face
-    print("Pushing to Hugging Face...")
-    try:
-        from datasets import Dataset
-        ds = Dataset.from_pandas(final_df)
-        ds.push_to_hub("JasonYan777/novelty-ranked-preprints")
-        print("Successfully pushed to JasonYan777/novelty-ranked-preprints")
-        
-    except Exception as e:
-        print(f"Error pushing to Hugging Face: {e}")
+    # 8. Push to Hugging Face
+    if not args.no_push:
+        print("Pushing to Hugging Face...")
+        try:
+            from datasets import Dataset
+            ds = Dataset.from_pandas(final_df)
+            ds.push_to_hub("JasonYan777/novelty-ranked-preprints")
+            print("Successfully pushed to JasonYan777/novelty-ranked-preprints")
+            
+        except Exception as e:
+            print(f"Error pushing to Hugging Face: {e}")
+    else:
+        print("Skipping push to Hugging Face (--no-push specified).")
 
     # 9. Update Reference Dataset
-    # update_reference_dataset(ranked_new_df)
+    update_reference_dataset(ranked_new_df)
 
 if __name__ == "__main__":
     main()

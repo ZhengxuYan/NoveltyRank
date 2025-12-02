@@ -178,11 +178,37 @@ def fetch_comprehensive_author_info(author_name, fetcher, debug=False):
         works, detailed.get("counts_by_year", [])
     )
 
+    # Process affiliations to get the most recent ones
+    affiliations_list = []
+    for aff in detailed.get("affiliations", []):
+        institution = aff.get("institution")
+        if institution and institution.get("display_name"):
+            years = aff.get("years", [])
+            if years:
+                max_year = max(years)
+                affiliations_list.append({
+                    "name": institution.get("display_name"),
+                    "max_year": max_year
+                })
+    
+    # Filter for recent affiliations (within last 3 years of the latest affiliation)
+    if affiliations_list:
+        # Sort by max_year descending
+        affiliations_list.sort(key=lambda x: x["max_year"], reverse=True)
+        
+        # Get the single most recent affiliation
+        # If there are ties (same max_year), the sort is stable or order doesn't strictly matter 
+        # but usually the first one is the "primary" one in OpenAlex return order if years match.
+        most_recent = affiliations_list[0]["name"]
+        affiliations_str = most_recent
+    else:
+        affiliations_str = ""
+
     comprehensive_info = {
         "openalex_id": detailed.get("id"),
         "name": detailed.get("display_name"),
         "orcid": detailed.get("orcid"),
-        "affiliations": ", ".join([a.get("institution", {}).get("display_name", "") for a in detailed.get("affiliations", []) if a.get("institution")]),
+        "affiliations": affiliations_str,
         "h_index": detailed.get("summary_stats", {}).get("h_index", 0),
         "i10_index": detailed.get("summary_stats", {}).get("i10_index", 0),
         "citation_count": detailed.get("cited_by_count", 0),
@@ -237,7 +263,6 @@ def enrich_papers_with_openalex(df, cache_file="openalex_cache.pkl", email="your
         
         # Use ThreadPoolExecutor for parallel fetching
         # OpenAlex polite pool allows ~10 req/s. 
-        # Reduced to 5 workers and added retries to be safe.
         max_workers = 5
         
         print(f"Fetching {len(remaining_authors)} authors with {max_workers} threads...")
@@ -297,6 +322,24 @@ def enrich_papers_with_openalex(df, cache_file="openalex_cache.pkl", email="your
         citations = []
         career_stages = []
         
+        # Lists to store author details
+        author_affs = []
+        author_ids = []
+        author_names = []
+        author_orcids = []
+        author_h_indices = []
+        author_i10_indices = []
+        author_citation_counts = []
+        author_paper_counts = []
+        author_two_year_citedness = []
+        author_years_active = []
+        author_first_pub_years = []
+        author_last_pub_years = []
+        author_career_stages = []
+        author_recent_productivity = []
+        author_avg_citations_per_paper = []
+        author_max_paper_citations = []
+        
         for author in authors:
             if author in author_info:
                 info = author_info[author]
@@ -306,6 +349,48 @@ def enrich_papers_with_openalex(df, cache_file="openalex_cache.pkl", email="your
                     citations.append(info["citation_count"])
                 if info.get("career_stage") is not None:
                     career_stages.append(info["career_stage"])
+                
+                # Helper to safely convert to string, keeping 0 but making None empty
+                def safe_str(val):
+                    if val is None:
+                        return ""
+                    return str(val)
+
+                # Collect details
+                author_affs.append(safe_str(info.get("affiliations")))
+                author_ids.append(safe_str(info.get("openalex_id")))
+                author_names.append(safe_str(info.get("name", author)))
+                author_orcids.append(safe_str(info.get("orcid")))
+                author_h_indices.append(safe_str(info.get("h_index")))
+                author_i10_indices.append(safe_str(info.get("i10_index")))
+                author_citation_counts.append(safe_str(info.get("citation_count")))
+                author_paper_counts.append(safe_str(info.get("paper_count")))
+                author_two_year_citedness.append(safe_str(info.get("two_year_citedness")))
+                author_years_active.append(safe_str(info.get("years_active")))
+                author_first_pub_years.append(safe_str(info.get("first_pub_year")))
+                author_last_pub_years.append(safe_str(info.get("last_pub_year")))
+                author_career_stages.append(safe_str(info.get("career_stage")))
+                author_recent_productivity.append(safe_str(info.get("recent_productivity")))
+                author_avg_citations_per_paper.append(safe_str(info.get("avg_citations_per_paper")))
+                author_max_paper_citations.append(safe_str(info.get("max_paper_citations")))
+
+            else:
+                author_affs.append("")
+                author_ids.append("")
+                author_names.append(author)
+                author_orcids.append("")
+                author_h_indices.append("")
+                author_i10_indices.append("")
+                author_citation_counts.append("")
+                author_paper_counts.append("")
+                author_two_year_citedness.append("")
+                author_years_active.append("")
+                author_first_pub_years.append("")
+                author_last_pub_years.append("")
+                author_career_stages.append("")
+                author_recent_productivity.append("")
+                author_avg_citations_per_paper.append("")
+                author_max_paper_citations.append("")
                     
         return {
             "num_authors": len(authors),
@@ -323,6 +408,24 @@ def enrich_papers_with_openalex(df, cache_file="openalex_cache.pkl", email="your
             "has_senior_author": any(s >= 20 for s in career_stages) if career_stages else None,
             "author_diversity_score": np.std(h_indices) if len(h_indices) > 1 else 0,
             "has_top_author": any(h >= 50 for h in h_indices) if h_indices else False,
+            
+            # New fields
+            "author_affiliations": "; ".join(author_affs),
+            "author_ids": "; ".join(author_ids),
+            "author_names": "; ".join(author_names),
+            "author_orcids": "; ".join(author_orcids),
+            "author_h_indices": "; ".join(author_h_indices),
+            "author_i10_indices": "; ".join(author_i10_indices),
+            "author_citation_counts": "; ".join(author_citation_counts),
+            "author_paper_counts": "; ".join(author_paper_counts),
+            "author_two_year_citedness": "; ".join(author_two_year_citedness),
+            "author_years_active": "; ".join(author_years_active),
+            "author_first_pub_years": "; ".join(author_first_pub_years),
+            "author_last_pub_years": "; ".join(author_last_pub_years),
+            "author_career_stages": "; ".join(author_career_stages),
+            "author_recent_productivity": "; ".join(author_recent_productivity),
+            "author_avg_citations_per_paper": "; ".join(author_avg_citations_per_paper),
+            "author_max_paper_citations": "; ".join(author_max_paper_citations)
         }
 
     print("Calculating paper features...")
