@@ -59,17 +59,13 @@ Despite the 235B model’s size advantage, its classification accuracy lags the 
 
 ## Category Focus: CS_CV
 - **SFT**
-	- Result dir: `results/sft_cv`
-	- Fnial Sampler: `tinker://b134fa47-0ac6-57bc-b8c7-9cf138a3ecaa:train:0/sampler_weights/final`
-  - Test metrics (limit 500, T=0.0): accuracy 0.776, precision 0.350, recall 0.223, F1 0.273
+	- Result dir: `results/noveltyrank_sft_qwen4b_cv`
+	- Fnial Sampler: `tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/sampler_weights/final`
+	- Test metrics (limit 500, T=0.0): accuracy 0.758, precision 0.255, recall 0.149, F1 0.188
 - **Classification-DPO**
-	- Result dir: `results/dpo_classification_cv`
-	- Final sampler: `tinker://61ef747f-c41d-5587-a754-771e2b1e114e:train:0/sampler_weights/final`
-  - Test metrics (limit 500, T=0.0): <>
-- **SFT + DPO**
-  - Result dir: `results/dpo_classification_cv_sftinit`
-  - Best sampler: `tinker://ff01d0b0-c39e-57f6-ba9d-552f229feb97:train:0/sampler_weights/final`
-  - Test metrics (limit 500, T=0.0): <>
+	- Result dir: `results/noveltyrank_dpo_qwen4b_classification_cs_cv`
+	- Final sampler: `tinker://e88323f5-71b3-5a81-a7e8-29e34c7ff873:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.704, precision 0.254, recall 0.298, F1 0.275
 - **Comparison-DPO**
 	- Result dir: `results/dpo_comparison_cv`
   - Final sampler: `tinker://f3ae720f-f1df-5ce8-92e5-300dd59b1b5f:train:0/sampler_weights/final`
@@ -161,4 +157,43 @@ We extract the top-K similar papers from arXiv for each target example in the da
 
 ### Observations
 - Similarity reports help SFT improve precision and recall significantly, indicating that richer context aids the model's understanding of novelty.
-- Classification-DPO with similarity reports shows moderate accuracy but balanced precision/
+- Classification-DPO with similarity reports shows moderate accuracy but balanced precision/recall, suggesting that the additional context helps mitigate overfitting to the majority class.
+
+
+
+### Latest Results Summary
+
+- without similarity report:
+- **SFT**
+	- Result dir: `results/sft_cv`
+	- Fnial Sampler: `tinker://b134fa47-0ac6-57bc-b8c7-9cf138a3ecaa:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.776, precision 0.350, recall 0.223, F1 0.273
+- **Classification-DPO**
+	- Result dir: `results/dpo_classification_cv`
+	- Final sampler: `tinker://61ef747f-c41d-5587-a754-771e2b1e114e:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): {'test_accuracy': 0.35, 'test_precision': 0.22033898305084745, 'test_recall': 0.9680851063829787, 'test_F1': 0.3589743589743589}
+- **SFT + DPO**
+  - Result dir: `results/dpo_classification_cv_sftinit`
+  - Best sampler: `tinker://ff01d0b0-c39e-57f6-ba9d-552f229feb97:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): {'test_accuracy': 0.744, 'test_precision': 0.31521739130434784, 'test_recall': 0.30851063829787234, 'test_F1': 0.3118279569892473}
+
+- with similarity report:
+- **SFT**
+  - Result dir: `results/sft_cv_sim`
+  - Final sampler: `tinker://a365c343-65f2-50b7-8276-4bade5f51896:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): accuracy 0.750, precision 0.304, recall 0.255, F1 0.277
+- **Classification-DPO**
+  - Result dir: `results/dpo_classification_cv_sim`
+  - Final sampler: `tinker://6903b11c-9d7d-52d6-9229-68e6b4ce0d56:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): {'test_accuracy': 0.386, 'test_precision': 0.22900763358778625, 'test_recall': 0.9574468085106383, 'test_F1': 0.36960985626283366}
+- **SFT + DPO**
+  - Result dir: `results/dpo_classification_cv_sftinit_sim`
+  - Best sampler: `tinker://d55a8693-af3c-5e69-9006-d62ab4a34aed:train:0/sampler_weights/final`
+  - Test metrics (limit 500, T=0.0): 
+
+python scripts/Qwen_4B/test/test_classification.py \
+   --category CS_CV \
+   --limit 500 \
+   --model-path tinker://d55a8693-af3c-5e69-9006-d62ab4a34aed:train:0/sampler_weights/000480
+
+framework
