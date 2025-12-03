@@ -153,7 +153,7 @@ We extract the top-K similar papers from arXiv for each target example in the da
 - **SFT + DPO**
   - Result dir: `results/new_model_dpo_cv_sftinit`
   - Best sampler: `tinker://9a82def9-793e-51f8-8a7a-cd23781cbdd4:train:0/sampler_weights/000310`
-  - Test metrics (limit 500, T=0.0): accuracy 0.782, precision 0.384, recall 0.304, F1 0.339
+  - Test metrics (limit 500, T=0.0): {'test_accuracy': 0.728, 'test_precision': 0.33064516129032256, 'test_recall': 0.43617021276595747, 'test_F1': 0.3761467889908257}
 
 ### Observations
 - Similarity reports help SFT improve precision and recall significantly, indicating that richer context aids the model's understanding of novelty.
@@ -194,6 +194,5 @@ We extract the top-K similar papers from arXiv for each target example in the da
 python scripts/Qwen_4B/test/test_classification.py \
    --category CS_CV \
    --limit 500 \
-   --model-path tinker://d55a8693-af3c-5e69-9006-d62ab4a34aed:train:0/sampler_weights/000480
+   --model-path tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/sampler_weights/final
 
-framework
