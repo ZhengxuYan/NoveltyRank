@@ -191,8 +191,57 @@ We extract the top-K similar papers from arXiv for each target example in the da
   - Best sampler: `tinker://d55a8693-af3c-5e69-9006-d62ab4a34aed:train:0/sampler_weights/final`
   - Test metrics (limit 500, T=0.0): 
 
-python scripts/Qwen_4B/test/test_classification.py \
-   --category CS_CV \
-   --limit 500 \
-   --model-path tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/sampler_weights/final
+  
+  - **Command Lines**
+    - Classification SFT (similarity-aware data)
+      ```bash
+      python scripts/Qwen_4B/train/sft.py \
+        log_path=results/aligned_sft_classification_sim_v2 \
+        wandb_name=aligned_sft_classification_sim_v2 \
+        learning_rate=2e-5 \
+        batch_size=256 \
+        num_epochs=12 \
+        eval_every=250 \
+        save_every=250
+      ```
+    - Classification DPO (warm-start from SFT checkpoint)
+      ```bash
+      python scripts/Qwen_4B/train/dpo.py \
+        env_config.dpo_mode=classification \
+        env_config.load_checkpoint_path=tinker://b5ca8513-464a-563b-b0e0-6e3a26fe90f9:train:0/weights/final \
+        env_config.log_path=results/aligned_dpo_classification_sim \
+        env_config.wandb_name=aligned_dpo_classification_sim \
+        env_config.learning_rate=1e-6 \
+        env_config.batch_size=128 \
+        env_config.num_epochs=1 \
+        env_config.eval_every=100 \
+        env_config.save_every=100
+      ```
+    - Comparison SFT (base data, five epochs)
+      ```bash
+      python scripts/Qwen_4B/train/sft.py \
+        data_variant=base \
+        sft_task=comparison \
+        log_path=results/aligned_sft_comparison_base \
+        wandb_name=aligned_sft_comparison_base \
+        learning_rate=3e-5 \
+        batch_size=64 \
+        num_epochs=10 \
+        eval_every=40 \
+        save_every=40
+      ```
+    - Comparison DPO (warm-start from comparison SFT)
+      ```bash
+      python scripts/Qwen_4B/train/dpo.py \
+        env_config.dpo_mode=comparison \
+        env_config.load_checkpoint_path=tinker://da6dc40b-ab62-5509-9a69-4691d2b5e044:train:0/weights/final \
+        env_config.log_path=results/aligned_dpo_comparison_base \
+        env_config.wandb_name=aligned_dpo_comparison_base \
+        env_config.learning_rate=1.5e-6 \
+        env_config.batch_size=64 \
+        env_config.num_epochs=4 \
+        env_config.eval_every=50 \
+        env_config.save_every=50
+      ```
+
 

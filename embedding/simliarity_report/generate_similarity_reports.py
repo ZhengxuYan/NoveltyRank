@@ -2,12 +2,15 @@
 """Utility to generate similarity reports for NoveltyRank datasets using Qwen3-235B via Tinker."""
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+import tempfile
+from collections.abc import Mapping, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from datasets import Dataset, load_dataset, load_from_disk
+from datasets import Dataset, Value, load_dataset, load_from_disk
 from dotenv import load_dotenv
 
 try:  # Allow running as a module or as a script
@@ -145,7 +148,8 @@ async def process_dataset(
     max_concurrency: int,
     preview_prompt_count: int,
     preview_output_count: int,
-) -> List[Dict[str, Any]]:
+    result_handler: Callable[[int, Dict[str, Any]], None],
+) -> int:
     semaphore = asyncio.Semaphore(max_concurrency)
     total = len(dataset)
     progress_bar = ProgressBar(total)
@@ -172,16 +176,32 @@ async def process_dataset(
         await progress_bar.update()
         return position, enriched
 
-    tasks = [process_entry(i, dataset[i]) for i in range(total)]
-    gathered_results = await asyncio.gather(*tasks)
+    tasks = [asyncio.create_task(process_entry(i, dataset[i])) for i in range(total)]
 
-    ordered: List[Optional[Dict[str, Any]]] = [None] * total
-    for position, enriched in gathered_results:
-        ordered[position] = enriched
+    processed = 0
+    for task in asyncio.as_completed(tasks):
+        position, enriched = await task
+        result_handler(position, enriched)
+        processed += 1
 
-    logger.info("Processed %d records", total)
+    logger.info("Processed %d records", processed)
 
-    return [record for record in ordered if record is not None]
+    return processed
+
+
+def _make_json_serializable(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _make_json_serializable(val) for key, val in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_make_json_serializable(item) for item in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()  # Works for datetime-like objects
+        except Exception:  # pragma: no cover - best-effort conversion
+            pass
+    return str(value)
 
 
 def slice_dataset(dataset: Dataset, offset: int, limit: Optional[int]) -> Dataset:
@@ -220,6 +240,22 @@ def parse_args() -> argparse.Namespace:
         "--output-root",
         default=None,
         help="Root directory to store generated splits when --split-root is supplied. Defaults to mirroring --split-root under a similiarity-aware directory.",
+    )
+    parser.add_argument(
+        "--category-root",
+        default=None,
+        help="Root directory containing per-category subdirectories. Each category will be processed by locating the split directory specified via --category-subdir.",
+    )
+    parser.add_argument(
+        "--category-subdir",
+        default="sft",
+        help="Subdirectory within each category that stores the splits (e.g., 'sft'). Use '.' to treat the category directory itself as the split root.",
+    )
+    parser.add_argument(
+        "--category",
+        dest="categories",
+        action="append",
+        help="Limit processing to the provided category name(s) when using --category-root. Can be supplied multiple times.",
     )
     parser.add_argument("--offset", type=int, default=0, help="Start index within the dataset")
     parser.add_argument(
@@ -316,6 +352,10 @@ async def async_main(
         logger.warning("No records to process (offset=%d, limit=%s)", args.offset, str(args.limit))
         return
     logger.info("Prepared dataset with %d records", len(target_dataset))
+    base_features = target_dataset.features.copy()
+    enriched_features = base_features.copy()
+    enriched_features["similarity_report"] = Value("string")
+    enriched_features["_position"] = Value("int64")
 
     default_metadata = [
         "data_cache/whole_dataset/train_sft_data/train_split_cleaned",
@@ -342,6 +382,7 @@ async def async_main(
         abs_path = os.path.abspath(path)
         if abs_path not in metadata_roots:
             metadata_roots.append(abs_path)
+    metadata_roots.sort()
 
     cache_path = args.metadata_cache or None
     metadata_index = ArxivMetadataIndex(
@@ -359,19 +400,41 @@ async def async_main(
         top_k=args.top_k,
     )
 
-    results = await process_dataset(
-        target_dataset,
-        sampler,
-        metadata_index,
-        args.max_concurrency,
-        preview_prompt_count=max(0, args.preview_prompts),
-        preview_output_count=max(0, args.preview_outputs),
-    )
+    with tempfile.TemporaryDirectory(prefix="similarity_reports_") as tmpdir:
+        jsonl_path = os.path.join(tmpdir, "reports.jsonl")
+        logger.debug("Writing intermediate results to %s", jsonl_path)
 
-    enriched_dataset = Dataset.from_list(results)
-    os.makedirs(output_dir, exist_ok=True)
-    logger.info("Saving enriched dataset with %d entries to %s", len(enriched_dataset), output_dir)
-    enriched_dataset.save_to_disk(output_dir)
+        with open(jsonl_path, "w", encoding="utf-8") as sink:
+            def _handle_result(position: int, enriched: Dict[str, Any]) -> None:
+                enriched_with_position = dict(enriched)
+                enriched_with_position["_position"] = position
+                serializable = _make_json_serializable(enriched_with_position)
+                sink.write(json.dumps(serializable, ensure_ascii=False) + "\n")
+
+            processed = await process_dataset(
+                target_dataset,
+                sampler,
+                metadata_index,
+                args.max_concurrency,
+                preview_prompt_count=max(0, args.preview_prompts),
+                preview_output_count=max(0, args.preview_outputs),
+                result_handler=_handle_result,
+            )
+            sink.flush()
+
+        logger.info("Loading %d intermediate records from %s", processed, jsonl_path)
+        enriched_dataset = load_dataset(
+            "json",
+            data_files=jsonl_path,
+            split="train",
+            features=enriched_features,
+        )
+        enriched_dataset = enriched_dataset.sort("_position")
+        enriched_dataset = enriched_dataset.remove_columns("_position")
+
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info("Saving enriched dataset with %d entries to %s", len(enriched_dataset), output_dir)
+        enriched_dataset.save_to_disk(output_dir)
 
 
 def _derive_default_output_root(split_root: str) -> str:
@@ -410,31 +473,82 @@ def _pick_secondary_split(split_dirs: List[Tuple[str, str]], primary_name: str) 
     return None
 
 
+def _process_split_root(args: argparse.Namespace, split_root: str, output_root_override: Optional[str]) -> None:
+    split_dirs = _enumerate_split_dirs(split_root)
+    output_root = (
+        os.path.abspath(output_root_override)
+        if output_root_override
+        else _derive_default_output_root(split_root)
+    )
+    os.makedirs(output_root, exist_ok=True)
+
+    additional_metadata = set(args.extra_metadata_split or [])
+    for _, path in split_dirs:
+        additional_metadata.add(path)
+    sorted_additional = sorted(additional_metadata)
+
+    for split_name, split_path in split_dirs:
+        logger.info("Processing split '%s' from %s", split_name, split_path)
+        target_output = os.path.join(output_root, split_name)
+        metadata_splits = [root for root in sorted_additional if root != split_path]
+        test_split = _pick_secondary_split(split_dirs, split_name)
+        asyncio.run(
+            async_main(
+                args,
+                train_split=split_path,
+                test_split=test_split,
+                output_dir=target_output,
+                extra_metadata_splits=metadata_splits,
+            )
+        )
+
+
 def main() -> None:
     args = parse_args()
-    if args.split_root:
-        split_dirs = _enumerate_split_dirs(args.split_root)
-        output_root = os.path.abspath(args.output_root) if args.output_root else _derive_default_output_root(args.split_root)
-        os.makedirs(output_root, exist_ok=True)
+    if args.category_root:
+        category_root = os.path.abspath(args.category_root)
+        if not os.path.isdir(category_root):
+            raise FileNotFoundError(f"category-root directory '{category_root}' does not exist")
 
-        additional_metadata = set(args.extra_metadata_split or [])
-        for _, path in split_dirs:
-            additional_metadata.add(path)
+        requested: Optional[set[str]] = set(args.categories or []) if args.categories else None
+        processed_any = False
+        for name in sorted(os.listdir(category_root)):
+            category_dir = os.path.join(category_root, name)
+            if not os.path.isdir(category_dir):
+                continue
+            if requested and name not in requested:
+                continue
 
-        for split_name, split_path in split_dirs:
-            logger.info("Processing split '%s' from %s", split_name, split_path)
-            target_output = os.path.join(output_root, split_name)
-            metadata_splits = list(additional_metadata - {split_path})
-            test_split = _pick_secondary_split(split_dirs, split_name)
-            asyncio.run(
-                async_main(
-                    args,
-                    train_split=split_path,
-                    test_split=test_split,
-                    output_dir=target_output,
-                    extra_metadata_splits=metadata_splits,
+            subdir = args.category_subdir or ""
+            if subdir in {"", "."}:
+                split_root = category_dir
+            else:
+                split_root = os.path.join(category_dir, subdir)
+
+            if not os.path.isdir(split_root):
+                logger.warning(
+                    "Skipping category '%s'; expected split directory %s is missing",
+                    name,
+                    split_root,
                 )
-            )
+                continue
+
+            if args.output_root:
+                base_output = os.path.join(os.path.abspath(args.output_root), name)
+                if subdir not in {"", "."}:
+                    base_output = os.path.join(base_output, subdir)
+            else:
+                base_output = None
+
+            _process_split_root(args, split_root, base_output)
+            processed_any = True
+
+        if not processed_any:
+            raise RuntimeError("No categories were processed under the provided category-root")
+        return
+
+    if args.split_root:
+        _process_split_root(args, args.split_root, args.output_root)
         return
 
     asyncio.run(

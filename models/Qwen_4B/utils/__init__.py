@@ -74,7 +74,18 @@ def _extract_similarity_report(example: Dict[str, Any]) -> str:
     if isinstance(report, list):
         report = "\n\n".join(str(item).strip() for item in report)
     report_str = str(report).strip()
-    return report_str or "No similarity report available."
+    if not report_str:
+        return "No similarity report available."
+
+    # Remove any embedded verdict lines to avoid leaking the gold label.
+    filtered_lines = []
+    for line in report_str.splitlines():
+        if line.strip().startswith("Novelty Verdict"):
+            continue
+        filtered_lines.append(line)
+
+    cleaned_report = "\n".join(filtered_lines).replace("<|im_end|>", "").strip()
+    return cleaned_report or "No similarity report available."
 
 
 def format_paper_block(title: str, authors: str, abstract: str, max_sim: float, avg_sim: float) -> str:

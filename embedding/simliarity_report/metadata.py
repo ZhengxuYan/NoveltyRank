@@ -50,8 +50,6 @@ class SimilarPaper:
     def to_serializable(self) -> Dict[str, Any]:
         return {
             "arxiv_id": self.arxiv_id,
-            "title": self.title,
-            "abstract": self.abstract,
             "embedding": list(self.embedding),
             "similarity_score": float(self.similarity_score),
             "publication_date": self.publication_date,

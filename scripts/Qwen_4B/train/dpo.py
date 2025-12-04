@@ -17,10 +17,20 @@ from tinker_cookbook import model_info
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
 # Import our custom dataset loader
-from models.Qwen_4B.dpo_env import NoveltyRankDatasetLoader, NoveltyRankEvaluatorBuilder, CLASSIFICATION_MODE, COMPARISION_MODE
-from models.Qwen_4B.utils.pipelines import WHOLE_DATASET, CS_RO, CS_CV
-
-_KNOWN_DPO_CATEGORIES = (WHOLE_DATASET, CS_RO, CS_CV)
+from models.Qwen_4B.dpo_env import (
+    NoveltyRankDatasetLoader,
+    NoveltyRankEvaluatorBuilder,
+    CLASSIFICATION_MODE,
+    COMPARISION_MODE,
+)
+from models.Qwen_4B.data_access import (
+    CATEGORY_SUBDIR_DEFAULT,
+    CS_CV,
+    CS_RO,
+    DATA_VARIANT_BASE,
+    DATA_VARIANT_SIM,
+    WHOLE_DATASET,
+)
 
 # Configure basic logging
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +61,8 @@ class NoveltyDPOConfig:
     num_epochs: int = 5
     dpo_beta: float = 0.1
     lora_rank: int = 32
+    save_every: int = 10
+    eval_every: int = 10
     
     # Data processing
     max_length: int = 1024
@@ -59,9 +71,11 @@ class NoveltyDPOConfig:
     # DPO Mode Selection: "comparison" (Pairwise A/B) or "classification" (Pointwise 1/0)
     dpo_mode: str = CURRENT_MODE
     category: str = WHOLE_DATASET
-    category_outdir: str = "data_cache"
-    category_seed: Optional[int] = None
     include_similarity_report: bool = False
+    classification_variant: str = DATA_VARIANT_SIM
+    comparison_variant: str = DATA_VARIANT_BASE
+    category_subdir: str = CATEGORY_SUBDIR_DEFAULT
+    eval_sample_limit: int = 1000
 
     # Infrastructure
     base_url: Optional[str] = None  # For local/remote service URL
@@ -74,10 +88,6 @@ class NoveltyDPOConfig:
 # -----------------------------------------------------------------------------
 
 def main(env_config: NoveltyDPOConfig):
-    
-    # dataset_path = "JasonYan777/novelty-dataset"
-    dataset_path = "JasonYan777/novelty-rank-with-similarities"
-
     logger.info(f"Starting DPO training for model: {env_config.model_name}")
     logger.info(f"DPO Mode: {env_config.dpo_mode}")
 
@@ -96,24 +106,25 @@ def main(env_config: NoveltyDPOConfig):
     
     dataset_builder = NoveltyRankDatasetLoader(
         common_config=common_ds_config,
-        dataset_path=dataset_path,
         dpo_mode=env_config.dpo_mode,
         category=env_config.category,
-        category_outdir=env_config.category_outdir,
-        category_seed=env_config.category_seed,
+        classification_variant=env_config.classification_variant,
+        comparison_variant=env_config.comparison_variant,
+        category_subdir=env_config.category_subdir,
         include_similarity_report=env_config.include_similarity_report,
     )
 
     # 4. Initialize Evaluator Builder
     eval_builder = NoveltyRankEvaluatorBuilder(
-        dataset_path=dataset_path,
         renderer_name=renderer_name,
         model_name=env_config.model_name,
         dpo_mode=env_config.dpo_mode,
         category=env_config.category,
-        category_outdir=env_config.category_outdir,
-        category_seed=env_config.category_seed,
+        classification_variant=env_config.classification_variant,
+        comparison_variant=env_config.comparison_variant,
+        category_subdir=env_config.category_subdir,
         include_similarity_report=env_config.include_similarity_report,
+        eval_sample_limit=env_config.eval_sample_limit,
     )
 
     # 5. Construct the Main DPO Training Configuration
@@ -140,8 +151,8 @@ def main(env_config: NoveltyDPOConfig):
         load_checkpoint_path=env_config.load_checkpoint_path,
         
         # Frequency settings
-        save_every=10,
-        eval_every=10
+        save_every=env_config.save_every,
+        eval_every=env_config.eval_every,
     )
 
     # 6. Run Training

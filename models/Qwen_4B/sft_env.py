@@ -4,8 +4,7 @@ import logging
 import chz
 import re
 import asyncio
-from typing import cast, Optional, List, Dict, Tuple, Any
-from datasets import Dataset, load_dataset, load_from_disk 
+from typing import Optional, List, Dict, Tuple, Any
 
 import tinker
 from tinker import types
@@ -20,20 +19,63 @@ import torch
 
 # Setup paths to find custom modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# Assuming the structure involves going up two levels to find 'models'
-sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
-# Assuming clean_dataset is available from this utility path
-from models.Qwen_4B.utils import clean_dataset, create_sft_example, _balance_dataset_by_upsampling
-from models.Qwen_4B.utils.pipelines import (
+# Ensure the repository root is discoverable for local imports
+repo_root = os.path.dirname(os.path.dirname(current_dir))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
+# Local utilities
+from models.Qwen_4B.data_access import (
+    CATEGORY_SUBDIR_DEFAULT,
+    DATA_VARIANT_SIM,
+    EXPECTED_DPO_COLUMNS,
+    TASK_CLASSIFICATION,
+    TASK_COMPARISON,
     WHOLE_DATASET,
-    DEFAULT_TRAIN_CACHE_DIR,
-    DEFAULT_TEST_CACHE_DIR,
-    ensure_base_sft_splits,
-    ensure_category_resources,
+    load_category_dataset,
 )
+from models.Qwen_4B.utils import _balance_dataset_by_upsampling
 
 # Configure basic logging
 logger = logging.getLogger(__name__)
+
+
+def _strip_novelty_verdict(example: dict[str, Any]) -> dict[str, Any]:
+    """Remove embedded novelty verdict lines from the user prompt."""
+    conversation = example.get("prompt_conversation")
+    if not conversation:
+        return example
+
+    new_conversation: list[dict[str, Any]] = []
+    updated = False
+    for message in conversation:
+        if message.get("role") != "user":
+            new_conversation.append(message)
+            continue
+
+        content = message.get("content", "")
+        if "Novelty Verdict" not in content and "<|im_end|>" not in content:
+            new_conversation.append(message)
+            continue
+
+        filtered_lines = [
+            line for line in content.splitlines()
+            if not line.strip().startswith("Novelty Verdict")
+        ]
+        cleaned = "\n".join(filtered_lines).replace("<|im_end|>", "").strip()
+        if cleaned != content:
+            updated = True
+            new_message = dict(message)
+            new_message["content"] = cleaned
+            new_conversation.append(new_message)
+        else:
+            new_conversation.append(message)
+
+    if not updated:
+        return example
+
+    updated_example = dict(example)
+    updated_example["prompt_conversation"] = new_conversation
+    return updated_example
 
 # =========================================================
 # Create AccuracyOnLabeledTestSetEvaluator
@@ -46,72 +88,57 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
 
     def __init__(
         self,
-        dataset_path: str,
         model_name: str,
-        max_tokens: int = 16,
-        local_cache_path: str = DEFAULT_TEST_CACHE_DIR,
         *,
+        max_tokens: int = 16,
         category: str = WHOLE_DATASET,
-        category_outdir: str = "data_cache",
-        category_seed: Optional[int] = None,
-        train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR,
+        data_variant: str = DATA_VARIANT_SIM,
+        category_subdir: str = CATEGORY_SUBDIR_DEFAULT,
+        sample_limit: Optional[int] = 1000,
         include_similarity_report: bool = False,
+        sft_task: str = TASK_CLASSIFICATION,
     ):
-        
-        # Define the path for the specific 'test' split inside the cache directory
-        train_split, test_split = ensure_base_sft_splits(
-            dataset_path,
-            train_cache_dir=train_cache_path,
-            test_cache_dir=local_cache_path,
+        if sft_task != TASK_CLASSIFICATION:
+            raise ValueError("AccuracyOnLabeledTestSetEvaluator currently supports only classification SFT tasks")
+        # Load the evaluation split directly from local caches.
+        self.test_data = load_category_dataset(
+            dataset_type=sft_task,
+            split="test",
+            category=category,
+            variant=data_variant,
+            category_subdir=category_subdir,
+            expected_columns=EXPECTED_DPO_COLUMNS,
         )
 
-        if category == WHOLE_DATASET:
-            local_split_path = test_split
-        else:
-            paths = ensure_category_resources(
-                category=category,
-                dataset_path=dataset_path,
-                train_split=train_split,
-                test_split=test_split,
-                outdir=category_outdir,
-                seed=category_seed,
-                need_sft=True,
-            )
-            local_split_path = paths.test_sft
-        
-        # ------------------------------------------------------------------
-        # FEATURE: Check Local -> Load Cleaned Data; Else -> Web -> Clean -> Save
-        # ------------------------------------------------------------------
-        if os.path.exists(local_split_path):
-            logger.info(f"[Evaluator] Local CLEANED cache found at {local_split_path}. Loading from disk...")
-            # OPTIMIZATION: Load the single split directly (faster)
-            cleaned_test_ds = load_from_disk(local_split_path)
-        else:
-            logger.info(f"[Evaluator] No local cache found. Downloading {dataset_path} from web...")
-            dataset = load_dataset(dataset_path)
-            
-            # 1. Execute cleaning operation
-            logger.info("[Evaluator] Downloading complete. Starting data cleaning...")
-            cleaned_test_ds = clean_dataset(dataset["test"], filter_year=False)
-            
-            # 2. OPTIMIZATION: Save the single split directly, avoiding Dataset.from_dict() overhead
-            logger.info(f"[Evaluator] Cleaning complete, saving split directly to {local_split_path}...")
-            cleaned_test_ds.save_to_disk(local_split_path)
-        
-        self.test_data = cleaned_test_ds
-        # ------------------------------------------------------------------
+        self.test_data = self.test_data.map(_strip_novelty_verdict)
 
-        # Further sampling and processing for the evaluation run
+        # Ensure label column exists for evaluation metrics.
+        def _extract_label(example: dict[str, Any]) -> dict[str, Any]:
+            assistant_messages = example.get("chosen", [])
+            if not assistant_messages:
+                raise ValueError("DPO example missing 'chosen' assistant response")
+            label_text = assistant_messages[-1].get("content", "").strip()
+            if label_text not in {"0", "1", "A", "B"}:
+                raise ValueError(f"Unexpected label content: '{label_text}'")
+            return {"label": label_text}
+
+        self.test_data = self.test_data.map(_extract_label)
+
         self.test_data = self.test_data.shuffle(seed=42)
-        # Select a sample size (min(1000, total_size))
-        self.test_data = self.test_data.select(range(min(1000, len(self.test_data))))
-        logger.info(f"[Evaluator] Using {len(self.test_data)} samples for evaluation.")
+        if sample_limit is not None:
+            effective_limit = min(sample_limit, len(self.test_data))
+            self.test_data = self.test_data.select(range(effective_limit))
+        logger.info(
+            "[Evaluator] Loaded %d samples for evaluation (category=%s, variant=%s)",
+            len(self.test_data),
+            category,
+            data_variant,
+        )
 
         self.model_name = model_name
         self.max_tokens = max_tokens
         self.include_similarity_report = include_similarity_report
 
-        # Create a tokenizer for encoding/decoding text
         self.tokenizer = get_tokenizer(model_name)
         self.service_client = tinker.ServiceClient()
 
@@ -144,13 +171,14 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         prompts = []
         labels = []
         for ex in self.test_data:
-            # create_sft_example generates the prompt and canonical label
-            user_prompts, user_labels = create_sft_example(
-                ex,
-                include_similarity_report=self.include_similarity_report,
-            )
-            prompts.append(user_prompts)
-            labels.append(user_labels)
+            conversation = ex.get("prompt_conversation", [])
+            assistant_messages = ex.get("chosen", [])
+            if not conversation:
+                raise ValueError("Evaluation example missing 'prompt_conversation'")
+            if not assistant_messages:
+                raise ValueError("Evaluation example missing 'chosen' response")
+            prompts.append(conversation[-1]["content"])
+            labels.append(ex["label"])
 
         # Query the model for predictions
         tasks = [get_prediction(p) for p in prompts]
@@ -170,6 +198,90 @@ class AccuracyOnLabeledTestSetEvaluator(SamplingClientEvaluator):
         F1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
 
         return {"test_accuracy": accuracy, "test_precision": precision, "test_recall": recall, "test_F1": F1}
+
+
+class ComparisonPairwiseAccuracyEvaluator(SamplingClientEvaluator):
+    """
+    Evaluates pairwise accuracy for comparison-style SFT runs that predict "A" or "B".
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        *,
+        max_tokens: int = 8,
+        category: str = WHOLE_DATASET,
+        data_variant: str = DATA_VARIANT_SIM,
+        category_subdir: str = CATEGORY_SUBDIR_DEFAULT,
+        sample_limit: Optional[int] = 1000,
+    ):
+        # Load comparison evaluation pairs from local cache.
+        self.test_data = load_category_dataset(
+            dataset_type=TASK_COMPARISON,
+            split="test",
+            category=category,
+            variant=data_variant,
+            category_subdir=category_subdir,
+            expected_columns=EXPECTED_DPO_COLUMNS,
+        )
+
+        self.test_data = self.test_data.shuffle(seed=42)
+        if sample_limit is not None:
+            effective_limit = min(sample_limit, len(self.test_data))
+            self.test_data = self.test_data.select(range(effective_limit))
+        logger.info(
+            "[ComparisonEvaluator] Loaded %d samples for evaluation (category=%s, variant=%s)",
+            len(self.test_data),
+            category,
+            data_variant,
+        )
+
+        self.model_name = model_name
+        self.max_tokens = max_tokens
+        self.tokenizer = get_tokenizer(model_name)
+
+    async def __call__(self, sampling_client: tinker.SamplingClient) -> dict[str, float]:
+        async def get_prediction(prompt_text: str) -> str:
+            response = await sampling_client.sample_async(
+                prompt=tinker.types.ModelInput.from_ints(
+                    self.tokenizer.encode(prompt_text)
+                ),
+                sampling_params=tinker.types.SamplingParams(
+                    max_tokens=self.max_tokens, temperature=0.0
+                ),
+                num_samples=1,
+            )
+            decoded = self.tokenizer.decode(response.sequences[0].tokens).strip()
+            match = re.findall(r"[AB]", decoded, flags=re.IGNORECASE)
+            decoded = match[0].upper() if match else ""
+            return decoded
+
+        prompts = []
+        labels = []
+        for ex in self.test_data:
+            conversation = ex.get("prompt_conversation", [])
+            assistant_messages = ex.get("chosen", [])
+            if not conversation:
+                raise ValueError("Evaluation example missing 'prompt_conversation'")
+            if not assistant_messages:
+                raise ValueError("Evaluation example missing 'chosen' response")
+            prompts.append(conversation[-1]["content"])
+            label_text = assistant_messages[-1]["content"].strip()
+            label_match = re.findall(r"[AB]", label_text, flags=re.IGNORECASE)
+            if not label_match:
+                raise ValueError(f"Comparison label missing A/B tag: {label_text!r}")
+            labels.append(label_match[0].upper())
+
+        tasks = [get_prediction(p) for p in prompts]
+        predictions = await asyncio.gather(*tasks)
+
+        correct = sum(1 for p, l in zip(predictions, labels) if p == l)
+        unresolved = sum(1 for p in predictions if p not in {"A", "B"})
+        total = len(labels)
+        accuracy = correct / total if total > 0 else 0.0
+        unresolved_rate = unresolved / total if total > 0 else 0.0
+
+        return {"test_accuracy": accuracy, "test_unresolved_rate": unresolved_rate}
 
 
 # ==========================================================
@@ -209,65 +321,82 @@ class SFTChatRenderer:
 @chz.chz
 class NoveltyRankSFTDataBuilder(ChatDatasetBuilder):
     """
-    Builds an SFT dataset for novelty ranking using a Hugging Face dataset.
+    Builds an SFT dataset for NoveltyRank directly from local caches.
     """
-    dataset_path: str
-
-    local_cache_path: str = chz.field(default=DEFAULT_TRAIN_CACHE_DIR)
-    test_cache_path: str = chz.field(default=DEFAULT_TEST_CACHE_DIR)
     category: str = chz.field(default=WHOLE_DATASET)
-    category_outdir: str = chz.field(default="data_cache")
-    category_seed: Optional[int] = chz.field(default=None)
-    balance_dataset: bool = True
+    data_variant: str = chz.field(default=DATA_VARIANT_SIM)
+    category_subdir: str = chz.field(default=CATEGORY_SUBDIR_DEFAULT)
+    balance_dataset: bool = False
     include_similarity_report: bool = chz.field(default=False)
+    sft_task: str = chz.field(default=TASK_CLASSIFICATION)
 
     def __call__(self):
-        train_split, test_split = ensure_base_sft_splits(
-            self.dataset_path,
-            train_cache_dir=self.local_cache_path,
-            test_cache_dir=self.test_cache_path,
+        if self.sft_task not in {TASK_CLASSIFICATION, TASK_COMPARISON}:
+            raise ValueError(f"Unsupported sft_task '{self.sft_task}'")
+
+        train_ds = load_category_dataset(
+            dataset_type=self.sft_task,
+            split="train",
+            category=self.category,
+            variant=self.data_variant,
+            category_subdir=self.category_subdir,
+            expected_columns=EXPECTED_DPO_COLUMNS,
         )
 
-        if self.category == WHOLE_DATASET:
-            train_dataset_path = train_split
-        else:
-            paths = ensure_category_resources(
-                category=self.category,
-                dataset_path=self.dataset_path,
-                train_split=train_split,
-                test_split=test_split,
-                outdir=self.category_outdir,
-                seed=self.category_seed,
-                need_sft=True,
-            )
-            train_dataset_path = paths.train_sft
+        train_ds = train_ds.map(_strip_novelty_verdict)
 
-        train_ds = load_from_disk(train_dataset_path)
+        def _extract_label(example: dict[str, Any]) -> dict[str, Any]:
+            assistant_messages = example.get("chosen", [])
+            if not assistant_messages:
+                raise ValueError("DPO example missing 'chosen' assistant response")
+            label_text = assistant_messages[-1].get("content", "").strip()
+            if not label_text:
+                raise ValueError("Assistant response must contain content")
+            return {"label": label_text}
+
+        train_ds = train_ds.map(_extract_label)
+        train_ds = train_ds.shuffle(seed=42)
+
+        if len(train_ds) == 0:
+            raise RuntimeError(
+                f"Training dataset empty for category={self.category}, variant={self.data_variant}"
+            )
 
         if self.balance_dataset:
-            train_ds = _balance_dataset_by_upsampling(train_ds)
+            if self.sft_task == TASK_CLASSIFICATION:
+                train_ds = _balance_dataset_by_upsampling(train_ds)
+            else:
+                logger.info(
+                    "Skipping balancing for non-classification SFT task '%s'",
+                    self.sft_task,
+                )
     
-        logger.info(f"[DataBuilder] Final training dataset size: {len(train_ds)}")
+        logger.info(
+            "[DataBuilder] Final training dataset size: %d (category=%s, variant=%s)",
+            len(train_ds),
+            self.category,
+            self.data_variant,
+        )
 
         sft_renderer = SFTChatRenderer(self.renderer)
 
         # define function to convert each example to Datums
         def example_to_datum(example: dict[str, Any]) -> list[types.Datum]:
-            user_prompt, label = create_sft_example(
-                example,
-                include_similarity_report=self.include_similarity_report,
-            )
+            conversation = example.get("prompt_conversation", [])
+            assistant_messages = example.get("chosen", [])
+            if not conversation:
+                raise ValueError("Training example missing 'prompt_conversation'")
+            if not assistant_messages:
+                raise ValueError("Training example missing 'chosen' response")
 
-            # convert to conversation format
-            conversation = [
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": label}
-            ]
+            assistant_response = assistant_messages[-1]["content"]
+            conversation = [dict(msg) for msg in conversation]
+            conversation.append({"role": "assistant", "content": assistant_response})
 
             # convert conversation to Datum
             tokens, weights = sft_renderer.to_tokens_weights(conversation)
             # Use max_length from common config
-            datum = datum_from_tokens_weights(tokens, weights, self.common_config.max_length) 
+            datum = datum_from_tokens_weights(tokens, weights, self.common_config.max_length)
             return [datum]
 
         # transform datasets to SupervisedDatasets

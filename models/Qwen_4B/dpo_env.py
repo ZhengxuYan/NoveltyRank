@@ -4,17 +4,15 @@ import logging
 import random
 import asyncio
 from typing import List, Tuple, Dict, Optional, Any
-from tinker_cookbook.supervised.common import datum_from_tokens_weights
-from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
+
 import chz
 import re
-from datasets import load_from_disk, Dataset as HFDataset
-
-# Add current path to sys.path to ensure tinker modules can be found
-sys.path.append(os.getcwd())
+from datasets import Dataset as HFDataset
 
 import tinker
 from tinker_cookbook import renderers
+from tinker_cookbook.eval.evaluators import SamplingClientEvaluator
+from tinker_cookbook.supervised.common import datum_from_tokens_weights
 from tinker_cookbook.tokenizer_utils import get_tokenizer, Tokenizer
 from tinker_cookbook.supervised.types import (
     ChatDatasetBuilder, 
@@ -23,14 +21,18 @@ from tinker_cookbook.supervised.types import (
 )
 from tinker_cookbook.eval.evaluators import Evaluator, EvaluatorBuilder
 
-from models.Qwen_4B.utils import create_classification_example, generate_classification_dpo_pairs
-from models.Qwen_4B.utils.pipelines import (
+from models.Qwen_4B.data_access import (
+    CATEGORY_SUBDIR_DEFAULT,
+    DATA_VARIANT_BASE,
+    DATA_VARIANT_SIM,
+    EXPECTED_DPO_COLUMNS,
+    TASK_CLASSIFICATION,
+    TASK_COMPARISON,
+    TASK_SFT,
     WHOLE_DATASET,
-    DEFAULT_TRAIN_CACHE_DIR,
-    DEFAULT_TEST_CACHE_DIR,
-    ensure_base_sft_splits,
-    ensure_category_resources,
+    load_category_dataset,
 )
+from models.Qwen_4B.utils import create_classification_example, generate_classification_dpo_pairs
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +44,10 @@ CLASSIFICATION_MODE = "classification"
 # Import Helpers from External Module (User Logic)
 # -----------------------------------------------------------------------------
 current_dir = os.path.dirname(os.path.abspath(__file__))
-# Assuming the structure involves going up two levels to find 'models'
-sys.path.append(os.path.dirname(os.path.dirname(current_dir)))
+# Ensure the repository root is discoverable for local imports
+repo_root = os.path.dirname(os.path.dirname(current_dir))
+if repo_root not in sys.path:
+    sys.path.append(repo_root)
 
 # -----------------------------------------------------------------------------
 # Dataset Implementation
@@ -198,66 +202,76 @@ class NoveltyRankAccuracyEvaluator(SamplingClientEvaluator):
 
 @chz.chz
 class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
-    dataset_path: str 
     renderer_name: str
     model_name: str
     max_tokens: int = 10
-    
-    # Mode selection
+
     dpo_mode: str = COMPARISION_MODE
 
-    # Category configuration
     category: str = WHOLE_DATASET
-    category_outdir: str = "data_cache"
-    category_seed: Optional[int] = None
-    train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR
-    test_cache_path: str = DEFAULT_TEST_CACHE_DIR
+    classification_variant: str = DATA_VARIANT_SIM
+    comparison_variant: str = DATA_VARIANT_BASE
+    category_subdir: str = CATEGORY_SUBDIR_DEFAULT
     include_similarity_report: bool = chz.field(default=False)
-    include_similarity_report: bool = chz.field(default=False)
+    eval_sample_limit: int = 1000
 
     def __call__(self) -> Evaluator:
         need_classification = self.dpo_mode == CLASSIFICATION_MODE
         mode_name = "Classification (1/0)" if need_classification else "Comparison (A/B)"
-        train_split, test_split = ensure_base_sft_splits(
-            self.dataset_path,
-            train_cache_dir=self.train_cache_path,
-            test_cache_dir=self.test_cache_path,
-        )
-        paths = ensure_category_resources(
-            category=self.category,
-            dataset_path=self.dataset_path,
-            train_split=train_split,
-            test_split=test_split,
-            outdir=self.category_outdir,
-            seed=self.category_seed,
-            need_sft=True,
-            need_classification=need_classification,
-            need_comparison=not need_classification,
-        )
+        dataset_type = TASK_CLASSIFICATION if need_classification else TASK_COMPARISON
+        variant = self.classification_variant if need_classification else self.comparison_variant
 
-        if need_classification:
-            logger.info("Loading classification test split from %s", paths.test_sft)
-            test_sft = load_from_disk(paths.test_sft)
+        if need_classification and self.include_similarity_report:
+            logger.info(
+                "Preparing classification evaluation pairs on-the-fly (category=%s, variant=%s)",
+                self.category,
+                self.classification_variant,
+            )
+            base_test = load_category_dataset(
+                dataset_type=TASK_SFT,
+                split="test",
+                category=self.category,
+                variant=self.classification_variant,
+                category_subdir=self.category_subdir,
+            )
+
             def _map_eval(example: Dict[str, Any]) -> Dict[str, Any]:
                 return create_classification_example(
                     example,
                     include_similarity_report=self.include_similarity_report,
                 )
 
-            test_dpo_pairs = test_sft.map(
+            test_dpo_pairs = base_test.map(
                 _map_eval,
-                remove_columns=test_sft.column_names,
+                remove_columns=base_test.column_names,
                 desc="Preparing classification evaluation pairs",
             )
         else:
-            target_cache_path = paths.test_comparison
-            logger.info("Loading comparison test cache from %s", target_cache_path)
-            test_dpo_pairs = load_from_disk(target_cache_path)
-        
-        # only take 1000 expamples for evaluation speed
-        test_dpo_pairs = test_dpo_pairs.select(range(min(1000, len(test_dpo_pairs))))
-        logger.info(f"Loaded {len(test_dpo_pairs)} test DPO pairs ({mode_name}) for evaluation.")
-        
+            logger.info(
+                "Loading %s test pairs (category=%s, variant=%s)",
+                mode_name,
+                self.category,
+                variant,
+            )
+            test_dpo_pairs = load_category_dataset(
+                dataset_type=dataset_type,
+                split="test",
+                category=self.category,
+                variant=variant,
+                expected_columns=EXPECTED_DPO_COLUMNS,
+            )
+
+        test_dpo_pairs = test_dpo_pairs.shuffle(seed=42)
+
+        if self.eval_sample_limit is not None:
+            limit = min(self.eval_sample_limit, len(test_dpo_pairs))
+            test_dpo_pairs = test_dpo_pairs.select(range(limit))
+        logger.info(
+            "Loaded %d test DPO pairs (%s) for evaluation.",
+            len(test_dpo_pairs),
+            mode_name,
+        )
+
         return NoveltyRankAccuracyEvaluator(
             test_dataset=test_dpo_pairs,
             renderer_name=self.renderer_name,
@@ -273,59 +287,64 @@ class NoveltyRankEvaluatorBuilder(EvaluatorBuilder):
 @chz.chz
 class NoveltyRankDatasetLoader(ChatDatasetBuilder):
     common_config: ChatDatasetBuilderCommonConfig
-    dataset_path: str
     
-    # Mode selection
-    dpo_mode: str = COMPARISION_MODE # or CLASSIFICATION_MODE
-
-    # Category configuration
+    dpo_mode: str = COMPARISION_MODE
     category: str = WHOLE_DATASET
-    category_outdir: str = "data_cache"
-    category_seed: Optional[int] = None
-    train_cache_path: str = DEFAULT_TRAIN_CACHE_DIR
-    test_cache_path: str = DEFAULT_TEST_CACHE_DIR
+    classification_variant: str = DATA_VARIANT_SIM
+    comparison_variant: str = DATA_VARIANT_BASE
+    category_subdir: str = CATEGORY_SUBDIR_DEFAULT
     include_similarity_report: bool = False
 
     def __call__(self) -> Tuple[SupervisedDataset, Optional[SupervisedDataset]]:
         need_classification = self.dpo_mode == CLASSIFICATION_MODE
         mode_name = "Classification (1/0)" if need_classification else "Comparison (A/B)"
-        train_split, test_split = ensure_base_sft_splits(
-            self.dataset_path,
-            train_cache_dir=self.train_cache_path,
-            test_cache_dir=self.test_cache_path,
-        )
-        paths = ensure_category_resources(
-            category=self.category,
-            dataset_path=self.dataset_path,
-            train_split=train_split,
-            test_split=test_split,
-            outdir=self.category_outdir,
-            seed=self.category_seed,
-            need_sft=True,
-            need_classification=need_classification,
-            need_comparison=not need_classification,
-        )
-        if need_classification:
-            if self.include_similarity_report:
-                logger.info(
-                    "Generating classification train pairs with similarity reports from %s",
-                    paths.train_sft,
-                )
-                base_train = load_from_disk(paths.train_sft)
-                train_dpo_pairs = generate_classification_dpo_pairs(
-                    base_train,
-                    include_similarity_report=True,
-                )
-            else:
-                target_cache_path = paths.train_classification
-                logger.info("Loading classification train cache from %s", target_cache_path)
-                train_dpo_pairs = load_from_disk(target_cache_path)
-        else:
-            target_cache_path = paths.train_comparison
-            logger.info("Loading comparison train cache from %s", target_cache_path)
-            train_dpo_pairs = load_from_disk(target_cache_path)
+        dataset_type = TASK_CLASSIFICATION if need_classification else TASK_COMPARISON
+        variant = self.classification_variant if need_classification else self.comparison_variant
 
-        logger.info(f"Loaded {len(train_dpo_pairs)} DPO examples ({mode_name}) for training.")
+        if need_classification and self.include_similarity_report:
+            logger.info(
+                "Generating classification train pairs with similarity reports (category=%s, variant=%s)",
+                self.category,
+                self.classification_variant,
+            )
+            base_train = load_category_dataset(
+                dataset_type=TASK_SFT,
+                split="train",
+                category=self.category,
+                variant=self.classification_variant,
+                category_subdir=self.category_subdir,
+            )
+            train_dpo_pairs = generate_classification_dpo_pairs(
+                base_train,
+                include_similarity_report=True,
+            )
+        else:
+            logger.info(
+                "Loading %s train pairs (category=%s, variant=%s)",
+                mode_name,
+                self.category,
+                variant,
+            )
+            train_dpo_pairs = load_category_dataset(
+                dataset_type=dataset_type,
+                split="train",
+                category=self.category,
+                variant=variant,
+                expected_columns=EXPECTED_DPO_COLUMNS,
+            )
+
+        train_dpo_pairs = train_dpo_pairs.shuffle(seed=42)
+
+        if len(train_dpo_pairs) == 0:
+            raise RuntimeError(
+                f"Loaded zero training examples for category={self.category}, variant={variant}"
+            )
+
+        logger.info(
+            "Loaded %d DPO examples (%s) for training.",
+            len(train_dpo_pairs),
+            mode_name,
+        )
 
         # Create the training dataset wrapper
         train_ds = NoveltyDPODataset(

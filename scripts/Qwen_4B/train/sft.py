@@ -1,46 +1,59 @@
-from dotenv import load_dotenv
-import chz
 import asyncio
-from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
-from tinker_cookbook.renderers import TrainOnWhat
-from tinker_cookbook import model_info
-from tinker_cookbook import cli_utils
-from tinker_cookbook.supervised import train
-from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
-from tinker_cookbook.renderers import TrainOnWhat
+import logging
+import os
+import sys
 
 from dotenv import load_dotenv
+import chz
+
 from tinker_cookbook import cli_utils, model_info
 from tinker_cookbook.renderers import TrainOnWhat
 from tinker_cookbook.supervised import train
 from tinker_cookbook.supervised.types import ChatDatasetBuilderCommonConfig
 
-import os, sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
 if repo_root not in sys.path:
     sys.path.append(repo_root)
-from models.Qwen_4B.sft_env import NoveltyRankSFTDataBuilder, AccuracyOnLabeledTestSetEvaluator
-from models.Qwen_4B.utils.pipelines import WHOLE_DATASET, CS_RO, CS_CV
+from models.Qwen_4B.data_access import (
+    CATEGORY_SUBDIR_DEFAULT,
+    CS_CV,
+    CS_RO,
+    DATA_VARIANT_SIM,
+    TASK_CLASSIFICATION,
+    TASK_COMPARISON,
+    WHOLE_DATASET,
+)
+from models.Qwen_4B.sft_env import (
+    NoveltyRankSFTDataBuilder,
+    AccuracyOnLabeledTestSetEvaluator,
+    ComparisonPairwiseAccuracyEvaluator,
+)
 
-_KNOWN_SFT_CATEGORIES = (WHOLE_DATASET, CS_RO, CS_CV)
+logger = logging.getLogger(__name__)
     
 def build_config(
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507",
     log_path: str = "results/noveltyrank_sft_qwen4b_cv",
-    dataset_path: str = "JasonYan777/novelty-rank-with-similarities",
     max_length: int = 4096,
     learning_rate: float = 2e-4,
     batch_size: int = 64,
     num_epochs: int = 10,
     eval_every: int = 24,
+    save_every: int = 24,
     wandb_project: str = "NoveltyRank",
     wandb_name: str = "sft_qwen_4b_cv",
     category: str = WHOLE_DATASET,
-    category_outdir: str = "data_cache",
-    category_seed: int | None = None,
     include_similarity_report: bool = False,
+    data_variant: str = DATA_VARIANT_SIM,
+    category_subdir: str = CATEGORY_SUBDIR_DEFAULT,
+    balance_dataset: bool = False,
+    eval_sample_limit: int = 1000,
+    sft_task: str = TASK_CLASSIFICATION,
 ) -> train.Config:
+    if sft_task not in {TASK_CLASSIFICATION, TASK_COMPARISON}:
+        raise ValueError(f"Unsupported sft_task '{sft_task}'")
+
     renderer_name = model_info.get_recommended_renderer_name(model_name)
     common_config = ChatDatasetBuilderCommonConfig(
         model_name_for_tokenizer=model_name,
@@ -51,26 +64,41 @@ def build_config(
     )
 
     dataset = NoveltyRankSFTDataBuilder(
-        dataset_path=dataset_path,
         common_config=common_config,
         category=category,
-        category_outdir=category_outdir,
-        category_seed=category_seed,
+        data_variant=data_variant,
+        category_subdir=category_subdir,
+        balance_dataset=balance_dataset,
         include_similarity_report=include_similarity_report,
+        sft_task=sft_task,
     )
 
-    def accuracy_eval_builder():
-        return AccuracyOnLabeledTestSetEvaluator(
-            dataset_path=dataset_path,
-            model_name=model_name,
-            max_tokens=16,
-            category=category,
-            category_outdir=category_outdir,
-            category_seed=category_seed,
-            train_cache_path=dataset.local_cache_path,
-            local_cache_path=dataset.test_cache_path,
-            include_similarity_report=include_similarity_report,
-        )
+    evaluator_builders = []
+    if sft_task == TASK_CLASSIFICATION:
+        def accuracy_eval_builder():
+            return AccuracyOnLabeledTestSetEvaluator(
+                model_name=model_name,
+                max_tokens=16,
+                category=category,
+                data_variant=data_variant,
+                category_subdir=category_subdir,
+                sample_limit=eval_sample_limit,
+                include_similarity_report=include_similarity_report,
+            )
+
+        evaluator_builders.append(accuracy_eval_builder)
+    elif sft_task == TASK_COMPARISON:
+        def comparison_eval_builder():
+            return ComparisonPairwiseAccuracyEvaluator(
+                model_name=model_name,
+                max_tokens=8,
+                category=category,
+                data_variant=data_variant,
+                category_subdir=category_subdir,
+                sample_limit=eval_sample_limit,
+            )
+
+        evaluator_builders.append(comparison_eval_builder)
 
     return train.Config(
         log_path=log_path,
@@ -82,7 +110,8 @@ def build_config(
         eval_every=eval_every,
         wandb_project=wandb_project,
         wandb_name=wandb_name,
-        evaluator_builders=[accuracy_eval_builder],
+        evaluator_builders=evaluator_builders,
+        save_every=save_every,
     )
 
 
@@ -91,6 +120,16 @@ async def main(
     category: str = WHOLE_DATASET,
     category_seed: int | None = None,
     include_similarity_report: bool = False,
+    data_variant: str = DATA_VARIANT_SIM,
+    category_subdir: str = CATEGORY_SUBDIR_DEFAULT,
+    balance_dataset: bool = False,
+    eval_sample_limit: int = 1000,
+    learning_rate: float | None = None,
+    batch_size: int | None = None,
+    num_epochs: int | None = None,
+    eval_every: int | None = None,
+    save_every: int | None = None,
+    sft_task: str = TASK_CLASSIFICATION,
     log_path: str | None = None,
     wandb_name: str | None = None,
 ):
@@ -98,9 +137,25 @@ async def main(
     # chz.entrypoint automatically handles configuration parsing before calling main
     config_kwargs = dict(
         category=category,
-        category_seed=category_seed,
         include_similarity_report=include_similarity_report,
+        data_variant=data_variant,
+        category_subdir=category_subdir,
+        balance_dataset=balance_dataset,
+        eval_sample_limit=eval_sample_limit,
+        sft_task=sft_task,
     )
+    if learning_rate is not None:
+        config_kwargs["learning_rate"] = learning_rate
+    if batch_size is not None:
+        config_kwargs["batch_size"] = batch_size
+    if num_epochs is not None:
+        config_kwargs["num_epochs"] = num_epochs
+    if eval_every is not None:
+        config_kwargs["eval_every"] = eval_every
+    if save_every is not None:
+        config_kwargs["save_every"] = save_every
+    if category_seed is not None:
+        logger.warning("category_seed is deprecated and ignored in the local pipeline.")
     if log_path is not None:
         config_kwargs["log_path"] = log_path
     if wandb_name is not None:
