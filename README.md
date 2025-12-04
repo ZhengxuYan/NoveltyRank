@@ -1,5 +1,12 @@
 # NoveltyRank
 
+<div align="center">
+  <img src="web/public/logo.png" alt="NoveltyRank Logo" width="200"/>
+  <br>
+  <a href="https://novelty-rank.vercel.app/"><strong>Explore the Leaderboard »</strong></a>
+</div>
+
+
 ## Overview
 
 This repository contains the implementation of **NoveltyRank**, a system designed to estimate the **conceptual novelty** of AI papers based on their semantic embeddings, similarity with prior literature, and metadata.  
