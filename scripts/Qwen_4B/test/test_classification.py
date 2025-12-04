@@ -9,9 +9,17 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
 if repo_root not in sys.path:
     sys.path.append(repo_root)
+from pathlib import Path
+from typing import Optional
+
 from models.Qwen_4B.sft_env import create_sft_example, clean_dataset
+from models.Qwen_4B.data_access import (
+    DEFAULT_CATEGORIES,
+    category_to_token,
+    normalize_category,
+)
 import asyncio
-from datasets import Dataset, load_dataset, load_from_disk
+from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk
 
 import re
 import tinker
@@ -24,6 +32,12 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 # Initialize Tinker Service Client
 load_dotenv()
 service_client = tinker.ServiceClient()
+
+CATEGORY_TOKEN_TO_NORMALIZED = {
+    category_to_token(category): normalize_category(category)
+    for category in DEFAULT_CATEGORIES
+}
+CATEGORY_TOKENS = list(CATEGORY_TOKEN_TO_NORMALIZED.keys())
 
 # Define TinkerSampler class
 class TinkerSampler():
@@ -83,6 +97,71 @@ async def process_one(data, sampler, include_similarity_report: bool):
     prediction = match[0] if match else ""
     return prediction, label
 
+
+def _load_category_sft_split(category_token: str) -> Optional[Dataset]:
+    path = Path("data_cache") / "categories" / category_token / "sft" / "test"
+    if not path.exists():
+        return None
+    print(f"Loading category test split from {path}...")
+    return load_from_disk(str(path))
+
+
+def _ensure_all_category_sft_splits(dataset_path: str, *, filter_year: bool = True) -> None:
+    """Rebuild and cache category-specific SFT test splits from the source dataset."""
+    print("Rebuilding category-level SFT test caches from source dataset...")
+    dataset_raw = load_dataset(dataset_path, split="test")
+    cleaned_dataset = clean_dataset(dataset_raw, filter_year=filter_year)
+
+    for token, normalized in CATEGORY_TOKEN_TO_NORMALIZED.items():
+        target = normalized.lower()
+        category_ds = cleaned_dataset.filter(
+            lambda example, target=target: str(example.get("Primary Category", "")).lower()
+            == target
+        )
+        if len(category_ds) == 0:
+            print(f"Warning: no samples found for category '{normalized}'. Skipping cache save.")
+            continue
+
+        save_path = Path("data_cache") / "categories" / token / "sft" / "test"
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        category_ds.save_to_disk(str(save_path))
+
+
+def _load_all_categories_dataset(dataset_path: str) -> Dataset:
+    datasets: list[Dataset] = []
+    missing_tokens = [token for token in CATEGORY_TOKENS if _load_category_sft_split(token) is None]
+
+    if missing_tokens:
+        print(
+            "Missing cached SFT test splits for categories: "
+            + ", ".join(sorted(missing_tokens))
+        )
+        _ensure_all_category_sft_splits(dataset_path, filter_year=True)
+
+    remaining_missing = []
+    for token in CATEGORY_TOKENS:
+        ds = _load_category_sft_split(token)
+        if ds is None:
+            remaining_missing.append(token)
+        else:
+            datasets.append(ds)
+
+    if remaining_missing:
+        print(
+            "Warning: still missing category splits after rebuild: "
+            + ", ".join(sorted(remaining_missing))
+        )
+
+    if not datasets:
+        raise RuntimeError("No category test splits available. Please regenerate dataset caches.")
+
+    combined = concatenate_datasets(datasets)
+    print(
+        f"Merged {len(datasets)} category test splits into a {len(combined)}-row dataset."
+    )
+    return combined
+
+
 async def main():
     # --- Configuration ---
     dataset_path = "JasonYan777/novelty-rank-with-similarities"
@@ -107,7 +186,11 @@ async def main():
     )
     args = parser.parse_args()
 
-    category = args.category
+    category_arg = args.category or "WHOLE_DATASET"
+    if category_arg.upper() in {"ALL", "WHOLE", "WHOLE_DATASET"}:
+        category_arg = "WHOLE_DATASET"
+    normalized_category = normalize_category(category_arg)
+    category = normalized_category if normalized_category != "" else "WHOLE_DATASET"
     model_name = args.model_name
     model_path = args.model_path or None
     temperature = args.temperature
@@ -115,33 +198,21 @@ async def main():
     dataset_limit = max(1, args.limit)
     include_similarity_report = args.include_similarity_report
 
-    local_cache_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
-    # If a category-specific cleaned SFT split exists, prefer it
-    category_sft_path = f"data_cache/categories/{category}/sft/test"
-    if os.path.exists(category_sft_path):
-        local_cache_path = category_sft_path
-    
-    # --- Data Loading with Caching Feature ---
-    
-    if os.path.exists(local_cache_path):
-        print(f"Local cleaned cache found at {local_cache_path}. Loading from disk...")
-        # Load the single cleaned split directly
-        dataset = load_from_disk(local_cache_path)
+    if category == "whole_dataset":
+        dataset = _load_all_categories_dataset(dataset_path)
     else:
-        print(f"No local cache found. Downloading {dataset_path} from web...")
-        
-        # 1. Download the raw dataset (synchronous operation)
-        dataset_raw = load_dataset(dataset_path, split="test")
-        
-        # 2. Clean the dataset
-        print("Downloading complete. Starting data cleaning...")
-        cleaned_dataset = clean_dataset(dataset_raw)
-        
-        # 3. Save the cleaned result to disk for next time (synchronous operation)
-        print(f"Cleaning complete, saving cleaned dataset to: {local_cache_path}...")
-        cleaned_dataset.save_to_disk(local_cache_path)
-        
-        dataset = cleaned_dataset
+        category_token = category_to_token(category)
+        dataset = _load_category_sft_split(category_token)
+        if dataset is None:
+            print(
+                f"No cached test split found for category '{category}'. Building from source dataset..."
+            )
+            _ensure_all_category_sft_splits(dataset_path, filter_year=True)
+            dataset = _load_category_sft_split(category_token)
+            if dataset is None:
+                raise RuntimeError(
+                    f"Failed to build test split for category '{category}'."
+                )
 
     # --- End of main function logic ---
     print(f"Successfully loaded and cleaned dataset of size: {len(dataset)}")

@@ -9,9 +9,15 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
 if repo_root not in sys.path:
     sys.path.append(repo_root)
-from models.Qwen_4B.utils import clean_dataset, generate_comparison_dpo_pairs
+from pathlib import Path
+
+from models.Qwen_4B.data_access import (
+    DEFAULT_CATEGORIES,
+    category_to_token,
+    normalize_category,
+)
 import asyncio
-from datasets import Dataset, load_dataset, load_from_disk
+from datasets import Dataset, concatenate_datasets, load_from_disk
 
 import re
 import tinker
@@ -68,6 +74,45 @@ class TinkerSampler():
 
         return response_message
     
+def _comparison_split_path(category_token: str, *, root: Path) -> Path:
+    return root / category_token / "dpo" / "comparison" / "test"
+
+
+def _load_category_comparison_split(category_token: str, *, root: Path) -> Dataset:
+    path = _comparison_split_path(category_token, root=root)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing comparison test split for token '{category_token}' at {path}."
+        )
+    print(f"Loading comparison test split from {path}...")
+    return load_from_disk(str(path))
+
+
+def _load_all_categories_comparison(*, root: Path) -> Dataset:
+    datasets: list[Dataset] = []
+    missing_tokens: list[str] = []
+
+    for category in DEFAULT_CATEGORIES:
+        token = category_to_token(category)
+        try:
+            datasets.append(_load_category_comparison_split(token, root=root))
+        except FileNotFoundError as exc:
+            print(f"Warning: {exc}")
+            missing_tokens.append(token)
+
+    if missing_tokens:
+        raise FileNotFoundError(
+            "Missing comparison test splits for categories: "
+            + ", ".join(sorted(missing_tokens))
+        )
+
+    combined = concatenate_datasets(datasets)
+    print(
+        f"Merged {len(datasets)} category comparison splits into {len(combined)} total examples."
+    )
+    return combined
+
+
 async def process_one(data, sampler):
     # data is a row from the DPO pairs dataset
     messages = data["prompt_conversation"]
@@ -84,7 +129,6 @@ async def process_one(data, sampler):
 
 async def main():
     # --- Configuration ---
-    dataset_path = "JasonYan777/novelty-rank-with-similarities"
     parser = argparse.ArgumentParser()
     parser.add_argument("--category", type=str, default="WHOLE_DATASET",
                         help="Data category to build DPO pairs for (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
@@ -99,50 +143,41 @@ async def main():
                         help="Maximum tokens to sample per response")
     parser.add_argument("--limit", type=int, default=100,
                         help="Number of comparison examples to evaluate")
+    parser.add_argument(
+        "--use-similarity-report",
+        action="store_true",
+        help="Load comparison splits that include similarity reports (from similiarity_aware_categories).",
+    )
     args = parser.parse_args()
-    category = args.category
+    category_arg = args.category or "WHOLE_DATASET"
+    if category_arg.upper() in {"ALL", "WHOLE", "WHOLE_DATASET"}:
+        category_arg = "WHOLE_DATASET"
+    normalized_category = normalize_category(category_arg)
+    if not normalized_category:
+        category = "whole_dataset"
+    elif normalized_category.replace(".", "_") == "whole_dataset":
+        category = "whole_dataset"
+    else:
+        category = normalized_category
     model_name = args.model_name
     model_path = args.model_path or None
     temperature = args.temperature
     max_tokens = args.max_tokens
     dataset_limit = max(1, args.limit)
 
-    local_sft_cache_path = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
-    local_dpo_cache_path = "data_cache/test_dpo_pairs_comparison"
+    category_root = Path("data_cache") / (
+        "similiarity_aware_categories" if args.use_similarity_report else "categories"
+    )
+    if not category_root.exists():
+        raise FileNotFoundError(
+            f"Category root '{category_root}' not found. Ensure the required caches are generated."
+        )
 
-    # Paths for category-specific caches
-    category_sft_path = f"data_cache/categories/{category}/sft/test"
-    category_dpo_path = f"data_cache/categories/{category}/dpo/comparison/test"
-    if os.path.exists(category_dpo_path):
-        local_dpo_cache_path = category_dpo_path
-    elif os.path.exists(category_sft_path):
-        local_sft_cache_path = category_sft_path
-    
-    # --- Data Loading with Caching Feature ---
-    if os.path.exists(local_dpo_cache_path):
-        print(f"Local DPO comparison cache found at {local_dpo_cache_path}. Loading from disk...")
-        dataset = load_from_disk(local_dpo_cache_path)
+    if category == "whole_dataset":
+        dataset = _load_all_categories_comparison(root=category_root)
     else:
-        print(f"No local DPO comparison cache found. Processing data...")
-        if os.path.exists(local_sft_cache_path):
-            print(f"Loading cleaned data from {local_sft_cache_path}...")
-            cleaned_dataset = load_from_disk(local_sft_cache_path)
-        else:
-            print(f"No cleaned data cache found. Downloading {dataset_path} from web...")
-            dataset_raw = load_dataset(dataset_path, split="test")
-            
-            print("Downloading complete. Starting data cleaning...")
-            cleaned_dataset = clean_dataset(dataset_raw, filter_year=False)
-            
-            print(f"Cleaning complete, saving cleaned dataset to: {local_sft_cache_path}...")
-            cleaned_dataset.save_to_disk(local_sft_cache_path)
-
-        print("Generating comparison DPO pairs...")
-        dataset = generate_comparison_dpo_pairs(cleaned_dataset)
-        # If a category was specified, save into the category dpo path to persist
-        save_path = local_dpo_cache_path if local_dpo_cache_path != "data_cache/test_dpo_pairs_comparison" else "data_cache/test_dpo_pairs_comparison"
-        print(f"Saving DPO comparison dataset to: {save_path}...")
-        dataset.save_to_disk(save_path)
+        category_token = category_to_token(category)
+        dataset = _load_category_comparison_split(category_token, root=category_root)
 
     # --- End of main function logic ---
     print(f"Successfully loaded DPO comparison dataset of size: {len(dataset)}")
