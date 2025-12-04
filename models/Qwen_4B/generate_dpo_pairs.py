@@ -7,6 +7,7 @@ import logging
 import random
 import shutil
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Iterable, List
 
@@ -106,7 +107,7 @@ def _discover_categories(root: Path, category_subdir: str) -> List[str]:
     return categories
 
 
-def _generate_comparison_pairs(dataset: Dataset, *, seed: int) -> Dataset:
+def _generate_comparison_pairs(dataset: Dataset, *, seed: int, anchor: str) -> Dataset:
     positives = dataset.filter(lambda row: str(row.get("label")) == "1")
     negatives = dataset.filter(lambda row: str(row.get("label")) == "0")
 
@@ -117,6 +118,18 @@ def _generate_comparison_pairs(dataset: Dataset, *, seed: int) -> Dataset:
             len(negatives),
         )
         return Dataset.from_list([])
+
+    if anchor == "negative":
+        indices = list(range(len(positives)))
+        random.Random(seed).shuffle(indices)
+        cycle = deque(indices)
+        pairs = []
+        for neg_sample in negatives:
+            pos_idx = cycle[0]
+            pos_sample = positives[pos_idx]
+            pairs.append(create_comparison_example(pos_sample, neg_sample))
+            cycle.rotate(-1)
+        return Dataset.from_list(pairs)
 
     rng = random.Random(seed)
     neg_indices = list(range(len(negatives)))
@@ -207,9 +220,15 @@ def main() -> None:
                 dpo_pairs = generate_classification_dpo_pairs(
                     dataset,
                     include_similarity_report=args.include_similarity_report,
+                    balance=(split == "train"),
                 )
             else:
-                dpo_pairs = _generate_comparison_pairs(dataset, seed=args.seed)
+                anchor = "negative" if split == "test" else "positive"
+                dpo_pairs = _generate_comparison_pairs(
+                    dataset,
+                    seed=args.seed,
+                    anchor=anchor,
+                )
 
             logger.info("Generated %d %s pairs", len(dpo_pairs), args.task)
 

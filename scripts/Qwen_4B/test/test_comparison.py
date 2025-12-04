@@ -27,6 +27,11 @@ from tinker_cookbook import renderers
 from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
+try:
+    from tqdm import tqdm
+except ImportError:  # tqdm provides nicer progress but is optional
+    tqdm = None
+
 # Initialize Tinker Service Client
 load_dotenv()
 service_client = tinker.ServiceClient()
@@ -196,7 +201,22 @@ async def main():
                             temperature=temperature, max_tokens=max_tokens)
 
     # asyncio generate predictions
-    results = await asyncio.gather(*[process_one(data, sampler) for data in dataset])
+    if tqdm is not None:
+        tasks = [
+            asyncio.create_task(process_one(dataset[idx], sampler))
+            for idx in range(len(dataset))
+        ]
+        results = []
+        for coro in tqdm(
+            asyncio.as_completed(tasks),
+            total=len(tasks),
+            desc="Evaluating",
+        ):
+            results.append(await coro)
+    else:
+        results = await asyncio.gather(
+            *[process_one(dataset[idx], sampler) for idx in range(len(dataset))]
+        )
     predictions, labels = zip(*results)
 
     # Compute accuracy

@@ -385,26 +385,32 @@ def generate_classification_dpo_pairs(
     dataset: Dataset,
     *,
     include_similarity_report: bool = False,
+    balance: bool = True,
 ) -> Dataset:
+    """Create classification DPO pairs with optional class balancing.
+
+    Balancing is desirable for training splits so the optimiser sees a
+    50/50 label mix, but evaluation splits should preserve their natural
+    distribution. The caller controls this behaviour via ``balance``.
     """
-    Generates Balanced DPO pairs for a Single-Paper Classification task.
-    It upsamples the positive examples to match the count of negative examples.
-    """
-    # 1. Balance the dataset
-    balanced_dataset = _balance_dataset_by_upsampling(dataset)
-    
-    # 2. Map to DPO format
-    original_cols = balanced_dataset.column_names
+    working_dataset = dataset
+    if balance:
+        working_dataset = _balance_dataset_by_upsampling(dataset)
+    else:
+        logger.info("Skipping class balancing for classification DPO pairs")
+
+    original_cols = working_dataset.column_names
+
     def _map_classification(example: Dict[str, Any]) -> Dict[str, Any]:
         return create_classification_example(
             example,
             include_similarity_report=include_similarity_report,
         )
 
-    dpo_dataset = balanced_dataset.map(
+    dpo_dataset = working_dataset.map(
         _map_classification,
         remove_columns=original_cols,
-        desc="Generating Balanced Classification DPO pairs"
+        desc="Generating classification DPO pairs",
     )
-    
+
     return dpo_dataset

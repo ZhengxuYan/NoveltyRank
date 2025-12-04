@@ -244,4 +244,26 @@ We extract the top-K similar papers from arXiv for each target example in the da
         env_config.save_every=50
       ```
 
+# Results Record
 
+## Classification Task
+- **Base Model** (10889 examples)
+  - Model path: None
+  - Metrics: accuracy: 0.173, precision: 0.130, recall: 0.993, F1: 0.230
+- **SFT with Similarity Report** (limit=10000)
+  - Model path: tinker://b5ca8513-464a-563b-b0e0-6e3a26fe90f9:train:0/sampler_weights/final
+  - Metrics: accuracy: 0.627, precision: 0.194, recall: 0.632, F1: 0.297
+- **DPO with Similarity Report (load from SFT)** (limit=10000)
+  - Model path: tinker://aa417c54-d5ee-5b99-a04e-66a1f4b40a51:train:0/sampler_weights/000900
+  - Metrics: accuracy: 0.612, precision: 0.205, recall: 0.735, F1: 0.321
+
+## Comparison Task
+- **Base Model** (9531 pairs)
+  - Model path: None
+  - Metrics: accuracy: 0.521
+- **SFT without Similarity Report** (limit=1000000)
+  - Model path: tinker://da6dc40b-ab62-5509-9a69-4691d2b5e044:train:0/sampler_weights/final
+  - Metrics: accuracy: 0.739
+- **DPO without Similarity Report (load from SFT)** (limit=1000000)
+  - Model path: tinker://a69d7dfe-9693-5eeb-9dea-b065b39b13e0:train:0/sampler_weights/000700
+  - Metrics: accuracy: 0.741

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Sequence
 
-from datasets import Dataset, load_from_disk
+from datasets import Dataset, load_from_disk, load_dataset
 
 CURRENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CURRENT_DIR.parent.parent
@@ -28,6 +29,32 @@ logger = logging.getLogger(__name__)
 DEFAULT_RAW_TRAIN = "data_cache/raw/novelty_rank_with_similarities/train"
 DEFAULT_RAW_TEST = "data_cache/raw/novelty_rank_with_similarities/test"
 DEFAULT_CATEGORIES = ["cs.CV", "cs.CL", "cs.LG", "cs.RO", "cs.CR", "cs.AI"]
+
+
+def _ensure_local_splits_present(
+    train_path: str, test_path: str, remote_dataset: str, splits: Sequence[str] = ("train", "test")
+) -> None:
+    """Ensure local dataset directories exist; if missing, download from HuggingFace remote_dataset.
+
+    The function will attempt to download the required split(s) and save them to the provided
+    `train_path` / `test_path` locations. If parent directory is provided (e.g., path ends with
+    'train' or 'test'), the downloaded split is saved exactly at that path.
+    """
+    for target_path, default_split in ((train_path, "train"), (test_path, "test")):
+        abs_target = os.path.abspath(target_path)
+        if os.path.exists(abs_target):
+            continue
+
+        # determine split name to request from remote
+        base = os.path.basename(abs_target).lower()
+        split_name = default_split if base not in splits else base
+
+        parent = os.path.dirname(abs_target)
+        os.makedirs(parent, exist_ok=True)
+        logger.info("Downloading remote split '%s' from %s to %s", split_name, remote_dataset, abs_target)
+        dataset = load_dataset(remote_dataset, split=split_name)
+        dataset.save_to_disk(abs_target)
+        logger.info("Saved remote split '%s' (%d rows) to %s", split_name, len(dataset), abs_target)
 
 
 def _collect_indices(dataset: Dataset, categories: Sequence[str]) -> Dict[str, List[int]]:
@@ -164,6 +191,16 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Abort on the first category that raises an exception",
     )
+    parser.add_argument(
+        "--download-if-missing",
+        action="store_true",
+        help="If local train/test splits are missing, download them from a remote HuggingFace dataset",
+    )
+    parser.add_argument(
+        "--remote-dataset-name",
+        default="JasonYan777/novelty-rank-with-similarities",
+        help="HuggingFace dataset identifier to download missing original splits from",
+    )
     return parser.parse_args()
 
 
@@ -195,6 +232,15 @@ def main() -> None:
 
     sft_summary: Dict[str, Dict[str, int]] = {}
     if run_sft:
+        if args.download_if_missing:
+            try:
+                _ensure_local_splits_present(
+                    args.train_input, args.test_input, args.remote_dataset_name
+                )
+            except Exception:  # don't fail silently on download issues
+                logger.exception("Failed to download missing raw splits from remote")
+                if args.fail_fast:
+                    raise
         train_dataset = clean_dataset(load_from_disk(args.train_input), filter_year=False)
         test_dataset = clean_dataset(load_from_disk(args.test_input), filter_year=False)
         logger.info(

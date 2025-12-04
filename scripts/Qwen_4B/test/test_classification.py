@@ -9,17 +9,15 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
 if repo_root not in sys.path:
     sys.path.append(repo_root)
-from pathlib import Path
-from typing import Optional
-
-from models.Qwen_4B.sft_env import create_sft_example, clean_dataset
 from models.Qwen_4B.data_access import (
-    DEFAULT_CATEGORIES,
-    category_to_token,
+    DATA_VARIANT_BASE,
+    DATA_VARIANT_SIM,
+    EXPECTED_DPO_COLUMNS,
+    TASK_CLASSIFICATION,
+    load_category_dataset,
     normalize_category,
 )
 import asyncio
-from datasets import Dataset, concatenate_datasets, load_dataset, load_from_disk
 
 import re
 import tinker
@@ -29,15 +27,14 @@ from tinker_cookbook import renderers
 from tinker_cookbook.model_info import get_recommended_renderer_name
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
+try:
+    from tqdm import tqdm
+except ImportError:  # tqdm is optional; fall back to plain progress
+    tqdm = None
+
 # Initialize Tinker Service Client
 load_dotenv()
 service_client = tinker.ServiceClient()
-
-CATEGORY_TOKEN_TO_NORMALIZED = {
-    category_to_token(category): normalize_category(category)
-    for category in DEFAULT_CATEGORIES
-}
-CATEGORY_TOKENS = list(CATEGORY_TOKEN_TO_NORMALIZED.keys())
 
 # Define TinkerSampler class
 class TinkerSampler():
@@ -82,14 +79,9 @@ class TinkerSampler():
 
         return response_message
     
-async def process_one(data, sampler, include_similarity_report: bool):
-    user_prompt, label = create_sft_example(
-        data,
-        include_similarity_report=include_similarity_report,
-    )
-    messages = [
-        renderers.Message(role="user", content=user_prompt)
-    ]
+async def process_one(data, sampler):
+    messages = data["prompt_conversation"]
+    label = data["chosen"][0]["content"].strip()
     prediction = await sampler.generate(messages)
     prediction = prediction['content']
     # Extract "0" or "1" from prediction using regex
@@ -98,80 +90,15 @@ async def process_one(data, sampler, include_similarity_report: bool):
     return prediction, label
 
 
-def _load_category_sft_split(category_token: str) -> Optional[Dataset]:
-    path = Path("data_cache") / "categories" / category_token / "sft" / "test"
-    if not path.exists():
-        return None
-    print(f"Loading category test split from {path}...")
-    return load_from_disk(str(path))
-
-
-def _ensure_all_category_sft_splits(dataset_path: str, *, filter_year: bool = True) -> None:
-    """Rebuild and cache category-specific SFT test splits from the source dataset."""
-    print("Rebuilding category-level SFT test caches from source dataset...")
-    dataset_raw = load_dataset(dataset_path, split="test")
-    cleaned_dataset = clean_dataset(dataset_raw, filter_year=filter_year)
-
-    for token, normalized in CATEGORY_TOKEN_TO_NORMALIZED.items():
-        target = normalized.lower()
-        category_ds = cleaned_dataset.filter(
-            lambda example, target=target: str(example.get("Primary Category", "")).lower()
-            == target
-        )
-        if len(category_ds) == 0:
-            print(f"Warning: no samples found for category '{normalized}'. Skipping cache save.")
-            continue
-
-        save_path = Path("data_cache") / "categories" / token / "sft" / "test"
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        category_ds.save_to_disk(str(save_path))
-
-
-def _load_all_categories_dataset(dataset_path: str) -> Dataset:
-    datasets: list[Dataset] = []
-    missing_tokens = [token for token in CATEGORY_TOKENS if _load_category_sft_split(token) is None]
-
-    if missing_tokens:
-        print(
-            "Missing cached SFT test splits for categories: "
-            + ", ".join(sorted(missing_tokens))
-        )
-        _ensure_all_category_sft_splits(dataset_path, filter_year=True)
-
-    remaining_missing = []
-    for token in CATEGORY_TOKENS:
-        ds = _load_category_sft_split(token)
-        if ds is None:
-            remaining_missing.append(token)
-        else:
-            datasets.append(ds)
-
-    if remaining_missing:
-        print(
-            "Warning: still missing category splits after rebuild: "
-            + ", ".join(sorted(remaining_missing))
-        )
-
-    if not datasets:
-        raise RuntimeError("No category test splits available. Please regenerate dataset caches.")
-
-    combined = concatenate_datasets(datasets)
-    print(
-        f"Merged {len(datasets)} category test splits into a {len(combined)}-row dataset."
-    )
-    return combined
-
-
 async def main():
     # --- Configuration ---
-    dataset_path = "JasonYan777/novelty-rank-with-similarities"
     parser = argparse.ArgumentParser()
     parser.add_argument("--category", type=str, default="WHOLE_DATASET",
                         help="Data category to evaluate (e.g., CS_CV, CS_RO, WHOLE_DATASET)")
     parser.add_argument("--model-name", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
                         help="Base model name registered with Tinker")
     parser.add_argument("--model-path", type=str,
-                        default="tinker://2e566352-bd3a-5c10-8e5a-2743d49bc353:train:0/sampler_weights/final",
+                        default="",
                         help="Tinker checkpoint URI (tinker://...) for sampling; leave empty for base model")
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="Sampling temperature")
@@ -190,33 +117,32 @@ async def main():
     if category_arg.upper() in {"ALL", "WHOLE", "WHOLE_DATASET"}:
         category_arg = "WHOLE_DATASET"
     normalized_category = normalize_category(category_arg)
-    category = normalized_category if normalized_category != "" else "WHOLE_DATASET"
+    if not normalized_category:
+        category = "whole_dataset"
+    elif normalized_category.replace(".", "_") == "whole_dataset":
+        category = "whole_dataset"
+    else:
+        category = normalized_category
     model_name = args.model_name
     model_path = args.model_path or None
     temperature = args.temperature
     max_tokens = args.max_tokens
     dataset_limit = max(1, args.limit)
     include_similarity_report = args.include_similarity_report
+    data_variant = DATA_VARIANT_SIM if include_similarity_report else DATA_VARIANT_BASE
 
-    if category == "whole_dataset":
-        dataset = _load_all_categories_dataset(dataset_path)
-    else:
-        category_token = category_to_token(category)
-        dataset = _load_category_sft_split(category_token)
-        if dataset is None:
-            print(
-                f"No cached test split found for category '{category}'. Building from source dataset..."
-            )
-            _ensure_all_category_sft_splits(dataset_path, filter_year=True)
-            dataset = _load_category_sft_split(category_token)
-            if dataset is None:
-                raise RuntimeError(
-                    f"Failed to build test split for category '{category}'."
-                )
+    dataset = load_category_dataset(
+        dataset_type=TASK_CLASSIFICATION,
+        split="test",
+        category=category,
+        variant=data_variant,
+        expected_columns=EXPECTED_DPO_COLUMNS,
+    )
 
     # --- End of main function logic ---
     print(f"Successfully loaded and cleaned dataset of size: {len(dataset)}")
     # shuffle and limit dataset size for testing
+    testset_total = len(dataset)
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.select(range(min(dataset_limit, len(dataset))))
 
@@ -226,22 +152,40 @@ async def main():
     print(f"Model Path: {model_path}")
     print(f"Temperature: {temperature}")
     print(f"Max Tokens: {max_tokens}")
+    print(f"Evaluation subset size: {len(dataset)} out of total {testset_total}")
     print("-------- Sampler initialized -------")
     sampler = TinkerSampler(model_name=model_name,
                             model_path=model_path,
                             temperature=temperature, max_tokens=max_tokens)
 
     # asyncio generate predictions
-    results = await asyncio.gather(
-        *[
-            process_one(
-                data,
-                sampler,
-                include_similarity_report=include_similarity_report,
+    if tqdm is not None:
+        tasks = [
+            asyncio.create_task(
+                process_one(
+                    dataset[idx],
+                    sampler,
+                )
             )
-            for data in dataset
+            for idx in range(len(dataset))
         ]
-    )
+        results = []
+        for coro in tqdm(
+            asyncio.as_completed(tasks),
+            total=len(tasks),
+            desc="Evaluating",
+        ):
+            results.append(await coro)
+    else:
+        results = await asyncio.gather(
+            *[
+                process_one(
+                    dataset[idx],
+                    sampler,
+                )
+                for idx in range(len(dataset))
+            ]
+        )
     predictions, labels = zip(*results)
 
     # Compute accuracy, precision, recall
