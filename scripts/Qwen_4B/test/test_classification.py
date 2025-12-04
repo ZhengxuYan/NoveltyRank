@@ -104,7 +104,7 @@ async def main():
                         help="Sampling temperature")
     parser.add_argument("--max-tokens", type=int, default=10,
                         help="Maximum tokens to sample per response")
-    parser.add_argument("--limit", type=int, default=500,
+    parser.add_argument("--limit", type=int, default=20000,
                         help="Number of evaluation examples to sample")
     parser.add_argument(
         "--include-similarity-report",

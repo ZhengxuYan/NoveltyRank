@@ -192,65 +192,17 @@ We extract the top-K similar papers from arXiv for each target example in the da
   - Test metrics (limit 500, T=0.0): 
 
   
-  - **Command Lines**
-    - Classification SFT (similarity-aware data)
-      ```bash
-      python scripts/Qwen_4B/train/sft.py \
-        log_path=results/aligned_sft_classification_sim_v2 \
-        wandb_name=aligned_sft_classification_sim_v2 \
-        learning_rate=2e-5 \
-        batch_size=256 \
-        num_epochs=12 \
-        eval_every=250 \
-        save_every=250
-      ```
-    - Classification DPO (warm-start from SFT checkpoint)
-      ```bash
-      python scripts/Qwen_4B/train/dpo.py \
-        env_config.dpo_mode=classification \
-        env_config.load_checkpoint_path=tinker://b5ca8513-464a-563b-b0e0-6e3a26fe90f9:train:0/weights/final \
-        env_config.log_path=results/aligned_dpo_classification_sim \
-        env_config.wandb_name=aligned_dpo_classification_sim \
-        env_config.learning_rate=1e-6 \
-        env_config.batch_size=128 \
-        env_config.num_epochs=1 \
-        env_config.eval_every=100 \
-        env_config.save_every=100
-      ```
-    - Comparison SFT (base data, five epochs)
-      ```bash
-      python scripts/Qwen_4B/train/sft.py \
-        data_variant=base \
-        sft_task=comparison \
-        log_path=results/aligned_sft_comparison_base \
-        wandb_name=aligned_sft_comparison_base \
-        learning_rate=3e-5 \
-        batch_size=64 \
-        num_epochs=10 \
-        eval_every=40 \
-        save_every=40
-      ```
-    - Comparison DPO (warm-start from comparison SFT)
-      ```bash
-      python scripts/Qwen_4B/train/dpo.py \
-        env_config.dpo_mode=comparison \
-        env_config.load_checkpoint_path=tinker://da6dc40b-ab62-5509-9a69-4691d2b5e044:train:0/weights/final \
-        env_config.log_path=results/aligned_dpo_comparison_base \
-        env_config.wandb_name=aligned_dpo_comparison_base \
-        env_config.learning_rate=1.5e-6 \
-        env_config.batch_size=64 \
-        env_config.num_epochs=4 \
-        env_config.eval_every=50 \
-        env_config.save_every=50
-      ```
+
 
 # Results Record
+We make aligned with the SciBERT Method, so that the results are comparable.
+We use the whole dataset for training and testing.
 
 ## Classification Task
-- **Base Model** (10889 examples)
+- **Base Model With Similarity Report** (10889 examples)
   - Model path: None
   - Metrics: accuracy: 0.173, precision: 0.130, recall: 0.993, F1: 0.230
-- **SFT with Similarity Report** (limit=10000)
+- **SFT with Similarity Report** 
   - Model path: tinker://b5ca8513-464a-563b-b0e0-6e3a26fe90f9:train:0/sampler_weights/final
   - Metrics: accuracy: 0.627, precision: 0.194, recall: 0.632, F1: 0.297
 - **DPO with Similarity Report (load from SFT)** (limit=10000)
@@ -258,12 +210,12 @@ We extract the top-K similar papers from arXiv for each target example in the da
   - Metrics: accuracy: 0.612, precision: 0.205, recall: 0.735, F1: 0.321
 
 ## Comparison Task
-- **Base Model** (9531 pairs)
+- **Base Model Without Similarity Report** (9531 pairs)
   - Model path: None
   - Metrics: accuracy: 0.521
-- **SFT without Similarity Report** (limit=1000000)
+- **SFT without Similarity Report** 
   - Model path: tinker://da6dc40b-ab62-5509-9a69-4691d2b5e044:train:0/sampler_weights/final
   - Metrics: accuracy: 0.739
-- **DPO without Similarity Report (load from SFT)** (limit=1000000)
+- **DPO without Similarity Report (load from SFT)** 
   - Model path: tinker://a69d7dfe-9693-5eeb-9dea-b065b39b13e0:train:0/sampler_weights/000700
   - Metrics: accuracy: 0.741

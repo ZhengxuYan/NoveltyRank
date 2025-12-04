@@ -135,116 +135,94 @@ Pass `include_similarity_report=true` to the SFT or DPO scripts to inject these 
 
 ### 4. Model Training
 
-#### Qwen3-4B Fine-Tuning
-Launch supervised fine-tuning (SFT) runs with the following commands:
+#### Qwen3-4B SFT and DPO Fine-Tuning
 
-```bash
-# Whole-dataset SFT (default)
-python scripts/Qwen_4B/train/sft.py \
-   log_path=results/sft_whole \
-   wandb_name=sft_whole
+- Classification SFT (with similarity-aware data)
+  ```bash
+  python scripts/Qwen_4B/train/sft.py \
+    log_path=results/aligned_sft_classification_sim_v2 \
+    wandb_name=aligned_sft_classification_sim_v2 \
+    learning_rate=2e-5 \
+    batch_size=256 \
+    num_epochs=12 \
+    eval_every=250 \
+    save_every=250
+  ```
 
-# Category-specific SFT (example: cs.CV)
-python scripts/Qwen_4B/train/sft.py \
-   category=cs.CV \
-   category_seed=42 \
-   log_path=results/sft_cv \
-   wandb_name=sft_cv
+- Classification DPO (warm-start from SFT checkpoint)
+  ```bash
+  python scripts/Qwen_4B/train/dpo.py \
+    env_config.dpo_mode=classification \
+    env_config.load_checkpoint_path=tinker://b5ca8513-464a-563b-b0e0-6e3a26fe90f9:train:0/weights/final \
+    env_config.log_path=results/aligned_dpo_classification_sim \
+    env_config.wandb_name=aligned_dpo_classification_sim \
+    env_config.learning_rate=1e-6 \
+    env_config.batch_size=128 \
+    env_config.num_epochs=1 \
+    env_config.eval_every=100 \
+    env_config.save_every=100
+  ```
 
-# Enable similarity-conditioned prompts
-python scripts/Qwen_4B/train/sft.py \
-   category=cs.CV \
-   category_seed=42 \
-   log_path=results/sft_cv_sim \
-   wandb_name=sft_cv_sim \
-   include_similarity_report=true
-```
+- Comparison SFT (base data without similarity-aware prompts)
+  ```bash
+  python scripts/Qwen_4B/train/sft.py \
+    data_variant=base \
+    sft_task=comparison \
+    log_path=results/aligned_sft_comparison_base \
+    wandb_name=aligned_sft_comparison_base \
+    learning_rate=3e-5 \
+    batch_size=64 \
+    num_epochs=10 \
+    eval_every=40 \
+    save_every=40
+  ```
 
-If the script detects an existing log directory it will ask whether to delete, resume, or exit. Respond at the prompt to control the behavior.
-
-If you want to customize hyperparameters, you can modify the `build_config` function in 
-`scripts/Qwen_4B/train/sft.py`.
-
-#### Qwen3-4B DPO Training
-Classification-style (1/0) and comparison-style (A/B) DPO share the same entrypoint. When either `model_name` or `env_config.load_checkpoint_path` references a Tinker URI, add `env_config.renderer_name=qwen3_instruct` so the script skips renderer autodetection (which otherwise fails on Tinker IDs). For warm starts, always point `env_config.load_checkpoint_path` at the `…/weights/final` artifact rather than `…/sampler_weights/final`.
-
-```bash
-# Whole-dataset classification DPO
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=classification \
-   env_config.log_path=results/dpo_classification_whole \
-   env_config.wandb_name=dpo_classification_whole
-
-# Category-specific classification DPO (cs.CV)
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=classification \
-   env_config.category=cs.CV \
-   env_config.log_path=results/dpo_classification_cv \
-   env_config.wandb_name=dpo_classification_cv
-
-# Resume legacy classification DPO (cs.CV) from an SFT checkpoint
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=classification \
-   env_config.category=CS_CV \
-   env_config.load_checkpoint_path=tinker://b134fa47-0ac6-57bc-b8c7-9cf138a3ecaa:train:0/weights/final \
-   env_config.log_path=results/dpo_classification_cv_sftinit \
-   env_config.wandb_name=dpo_classification_cv_sftinit 
-
-# Include similarity reports during classification DPO(cs.CV)
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=classification \
-   env_config.category=cs.CV \
-   env_config.log_path=results/dpo_classification_cv_sim \
-   env_config.wandb_name=dpo_classification_cv_sim \
-   env_config.include_similarity_report=true
-
-# Include similarity reports during classification DPO (load from SFT, cs.CV)
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=classification \
-   env_config.category=cs.CV \
-   env_config.load_checkpoint_path=tinker://4ba31574-b75b-52fc-a87a-408e984590d0:train:0/weights/final \
-   env_config.log_path=results/dpo_classification_cv_sftinit_sim \
-   env_config.wandb_name=dpo_classification_cv_sftinit_sim \
-   env_config.include_similarity_report=true
-
-# Category-specific comparison DPO (cs.CV)
-python scripts/Qwen_4B/train/dpo.py \
-   env_config.dpo_mode=comparison \
-   env_config.category=cs.CV \
-   env_config.log_path=results/dpo_comparison_cv \
-   env_config.wandb_name=dpo_comparison_cv
-```
+- Comparison DPO (warm-start from comparison SFT)
+  ```bash
+  python scripts/Qwen_4B/train/dpo.py \
+    env_config.dpo_mode=comparison \
+    env_config.load_checkpoint_path=tinker://da6dc40b-ab62-5509-9a69-4691d2b5e044:train:0/weights/final \
+    env_config.log_path=results/aligned_dpo_comparison_base \
+    env_config.wandb_name=aligned_dpo_comparison_base \
+    env_config.learning_rate=1.5e-6 \
+    env_config.batch_size=64 \
+    env_config.num_epochs=4 \
+    env_config.eval_every=50 \
+    env_config.save_every=50
+  ```
 
 All runs write checkpoints and W&B logs into the specified `log_path`. Use unique directories when launching multiple experiments in parallel.
 
-- **Description**
-  - The script fine-tunes the Qwen/Qwen3-4B-Instruct-2507 on the NoveltyRank dataset using supervised learning with Tinker Cookbook.
-  - Tinker Cookbook is used for data loading, model training, and evaluation, without worrying about low-level details(e.g., distributed training, mixed precision, etc.).
+**Description**
+
+- These scripts fine-tune `Qwen/Qwen3-4B-Instruct-2507` on the NoveltyRank dataset using supervised learning and DPO where applicable.
+- We rely on the Tinker Cookbook for data loading, distributed training, and other low-level details so you can focus on configuration and hyperparameters.
 
 #### Qwen3-4B Evaluations
 
 Quickly sanity-check the latest checkpoints with the lightweight evaluation scripts:
 
 ```bash
-# Classification accuracy on cs.CV split
+# Classification accuracy on whole dataset with similarity report
 python scripts/Qwen_4B/test/test_classification.py \
-   --category CS_CV \
-   --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final
+   --category WHOLE_DATASET \
+   --model-path tinker://aa417c54-d5ee-5b99-a04e-66a1f4b40a51:train:0/sampler_weights/000900 \
+   --include-similarity-report
 
-# Pairwise comparison accuracy on cs.CV split
+# Comparison accuracy on whole dataset
 python scripts/Qwen_4B/test/test_comparison.py \
-   --category CS_CV \
-   --model-path tinker://YOUR-JOB-ID:train:0/sampler_weights/final
+   --category WHOLE_DATASET \
+   --model-path tinker://a69d7dfe-9693-5eeb-9dea-b065b39b13e0:train:0/sampler_weights/000700
 ```
 
 Key flags:
-- `--category`: Chooses a category-specific cache if present; defaults to the full dataset cache.
+- `--category`: Choose a category-specific cache if present (e.g. `CS_CV`, `CS_AI`). If not provided, the scripts fall back to the whole-dataset cache.
 - `--model-name`: Base model registered with Tinker (defaults to the production Qwen3-4B checkpoint).
-- `--model-path`: Tinker checkpoint URI (defaults to the reference fine-tune in this repo). Pass an empty string to fall back to the base model.
+- `--model-path`: Tinker checkpoint URI. Pass an empty string to fall back to the base model.
 - `--temperature`: Sampling temperature (default `0.0` for deterministic decoding).
 - `--max-tokens`: Maximum generated tokens (`10` for classification, `512` for comparison).
 - `--limit`: Caps the number of evaluation examples (useful for quick smoke tests).
-- `--include-similarity-report`: Adds the aggregated similarity context to each classification prompt.
+- `--include-similarity-report`: Add aggregated similarity context to each classification prompt.
 
 
 #### SciBERT Multimodal Training
