@@ -88,11 +88,11 @@ def _extract_similarity_report(example: Dict[str, Any]) -> str:
     return cleaned_report or "No similarity report available."
 
 
-def format_paper_block(title: str, authors: str, abstract: str, max_sim: float, avg_sim: float) -> str:
+def format_paper_block(title: str, category: str, abstract: str, max_sim: float, avg_sim: float) -> str:
     """Helper to format a single paper's details."""
     return f"""
 Title: {title}
-Authors: {authors}
+Primary Category: {category}
 Abstract: {abstract}
 Max similarity to prior work: {max_sim:.4f}
 Average similarity to prior work: {avg_sim:.4f}
@@ -105,12 +105,12 @@ def create_comparison_example(novel_paper: Dict, random_paper: Dict) -> Dict:
     """
     
     novel_text = format_paper_block(
-        novel_paper.get("Title", ""), novel_paper.get("Authors", ""), novel_paper.get("Abstract", ""),
+        novel_paper.get("Title", ""), novel_paper.get("Primary Category", ""), novel_paper.get("Abstract", ""),
         novel_paper["max_similarity"], novel_paper["avg_similarity"]
     )
     
     random_text = format_paper_block(
-        random_paper.get("Title", ""), random_paper.get("Authors", ""), random_paper.get("Abstract", ""),
+        random_paper.get("Title", ""), random_paper.get("Primary Category", ""), random_paper.get("Abstract", ""),
         random_paper["max_similarity"], random_paper["avg_similarity"]
     )
 
@@ -261,7 +261,7 @@ def create_sft_example(
     and return the canonical label as a string. Optionally includes similarity analysis.
     """
     title = example.get("Title", "")
-    authors = example.get("Authors", "")
+    category = example.get("Primary Category", "")
     abstract = example.get("Abstract", "")
     max_sim = example.get("max_similarity", example.get("Max similarity", "N/A"))
     avg_sim = example.get("avg_similarity", example.get("Average similarity", "N/A"))
@@ -288,7 +288,7 @@ def create_sft_example(
         "---\n"
         "### Paper Metadata\n"
         f"Title: {title}\n"
-        f"Authors: {authors}\n"
+        f"Primary Category: {category}\n"
         f"Abstract: {abstract}\n"
         f"Max similarity to prior work: {max_sim}\n"
         f"Average similarity to prior work: {avg_sim}\n"

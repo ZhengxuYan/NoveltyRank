@@ -65,11 +65,11 @@ def clean_dataset(dataset: Dataset, filter_year=True) -> Dataset:
     return dataset
 
 
-def format_paper_block(title: str, authors: str, abstract: str, max_sim: float, avg_sim: float) -> str:
+def format_paper_block(title: str, field: str, abstract: str, max_sim: float, avg_sim: float) -> str:
     """Helper to format a single paper's details."""
     return f"""
 Title: {title}
-Authors: {authors}
+Field: {field}
 Abstract: {abstract}
 Max similarity to prior work: {max_sim:.4f}
 Average similarity to prior work: {avg_sim:.4f}
@@ -82,12 +82,12 @@ def create_comparison_example(novel_paper: Dict, random_paper: Dict) -> Dict:
     """
     
     novel_text = format_paper_block(
-        novel_paper.get("Title", ""), novel_paper.get("Authors", ""), novel_paper.get("Abstract", ""),
+        novel_paper.get("Title", ""), novel_paper.get("Primary Category", ""), novel_paper.get("Abstract", ""),
         novel_paper["max_similarity"], novel_paper["avg_similarity"]
     )
     
     random_text = format_paper_block(
-        random_paper.get("Title", ""), random_paper.get("Authors", ""), random_paper.get("Abstract", ""),
+        random_paper.get("Title", ""), random_paper.get("Primary Category", ""), random_paper.get("Abstract", ""),
         random_paper["max_similarity"], random_paper["avg_similarity"]
     )
 
@@ -237,7 +237,7 @@ def create_sft_example(example: dict[str, str]) -> list[dict[str, str]]:
     and the ground truth label from a single paper example.
     """
     title = example.get("Title", "")
-    authors = example.get("Authors", "")
+    field = example.get("Primary Category", "")  # Will be used as field
     abstract = example.get("Abstract", "")
     max_sim = example.get("max_similarity", "N/A")
     avg_sim = example.get("average_similarity", "N/A")
@@ -245,39 +245,39 @@ def create_sft_example(example: dict[str, str]) -> list[dict[str, str]]:
     
     # generate user prompt
     user_prompt = f"""
-            You are an expert AI researcher and senior conference reviewer (NeurIPS/ICLR level). 
-            Your goal is to **assess the conceptual novelty** of a new research paper.
+                You are an expert AI researcher and senior conference reviewer (NeurIPS/ICLR level). 
+                Your goal is to **assess the conceptual novelty** of a new research paper.
 
-            ---
-            ### What is Conceptual Novelty?
-            Conceptual novelty is not just about being different; it's about introducing a fundamental shift in thinking. Consider these dimensions:
-            -   **Problem Formulation:** Does the paper define a new problem or re-frame an existing one in a completely new way?
-            -   **Methodological Innovation:** Does it propose a new class of models, algorithms, or frameworks (e.g., Attention, GANs, Diffusion Models)? This is more than just tweaking an existing architecture.
-            -   **Theoretical Insight:** Does it provide a new theoretical understanding that unifies disparate concepts or explains a phenomenon in a new light?
-            -   **Cross-Disciplinary Application:** Does it successfully import a concept from another field, creating a new line of inquiry (e.g., applying concepts from physics to machine learning)?
+                ---
+                ### What is Conceptual Novelty?
+                Conceptual novelty is not just about being different; it's about introducing a fundamental shift in thinking. Consider these dimensions:
+                -   **Problem Formulation:** Does the paper define a new problem or re-frame an existing one in a completely new way?
+                -   **Methodological Innovation:** Does it propose a new class of models, algorithms, or frameworks (e.g., Attention, GANs, Diffusion Models)? This is more than just tweaking an existing architecture.
+                -   **Theoretical Insight:** Does it provide a new theoretical understanding that unifies disparate concepts or explains a phenomenon in a new light?
+                -   **Cross-Disciplinary Application:** Does it successfully import a concept from another field, creating a new line of inquiry (e.g., applying concepts from physics to machine learning)?
 
-            Incremental work, such as hyperparameter tuning, minor architectural tweaks, or applying a known method to a new dataset without significant adaptation, is **not** considered conceptually novel.
+                Incremental work, such as hyperparameter tuning, minor architectural tweaks, or applying a known method to a new dataset without significant adaptation, is **not** considered conceptually novel.
             
-            ---
-            ### Step-by-step reasoning:
-            1. **Understand** the paper’s main idea, contribution, and context from its title and abstract.
-            2. **Compare** it conceptually against prior literature (based on the given similarity metrics).
-            3. **Evaluate** whether the paper represents a conceptually novel contribution based on the definition above.
-            4. **Predict** whether this project is likely to have *high influence* or *define a new paradigm*.
-            5. Finally, output a binary decision:
-               - Output `'1'` if the paper is conceptually novel and likely to influence future research,
-               - Output `'0'` otherwise.
+                ---
+                ### Step-by-step reasoning:
+                1. **Understand** the paper’s main idea, contribution, and context from its title and abstract.
+                2. **Compare** it conceptually against prior literature (based on the given similarity metrics).
+                3. **Evaluate** whether the paper represents a conceptually novel contribution based on the definition above.
+                4. **Predict** whether this project is likely to have *high influence* or *define a new paradigm*.
+                5. Finally, output a binary decision:
+                    - Output `'1'` if the paper is conceptually novel and likely to influence future research,
+                    - Output `'0'` otherwise.
             
-            ---
-            ### Input
-            Title: {title}
-            Authors: {authors}
-            Abstract: {abstract}
-            Max similarity to prior work: {max_sim}
-            Average similarity to prior work: {avg_sim}
+                ---
+                ### Input
+                Title: {title}
+                Field: {field}
+                Abstract: {abstract}
+                Max similarity to prior work: {max_sim}
+                Average similarity to prior work: {avg_sim}
             
-            ---
-            ### Few-shot Examples
+                ---
+                ### Few-shot Examples
             
             **Example 1**
             Title: "Attention Is All You Need"
