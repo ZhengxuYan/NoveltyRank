@@ -13,6 +13,13 @@ from pydantic import BaseModel, Field
 from bespokelabs import curator
 from dotenv import load_dotenv
 import argparse
+import signal
+
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException
 
 load_dotenv()
 
@@ -33,6 +40,9 @@ class PaperNoveltyAnalysis(BaseModel):
     contribution_statements: List[str] = Field(default_factory=list, description="Concise sentences where authors state their contribution.")
     gap_identification: List[str] = Field(default_factory=list, description="Concise sentences describing limitations of SOTA.")
     novelty_claim_type: str = Field(default="N/A", description="Type of novelty: 'Architecture', 'Data', 'Application', 'Efficiency', 'Theory', or 'Other'.")
+    
+    # Authors
+    author_affiliations: List[str] = Field(default_factory=list, description="List of author affiliations found in the paper.")
     
     # Problem Solution
     input_description: str = Field(default="N/A", description="Short description of the input.")
@@ -61,21 +71,27 @@ Your goal is to extract specific signals that define the "delta" between this wo
 
 **CRITICAL: Be extremely concise. Use short sentences and bullet points. Save tokens.**
 
+**Author Extraction:**
+- Look for the `\\author{{...}}` block or similar metadata at the beginning of the text.
+- Extract the list of affiliations (universities, companies, research institutes).
+- Ignore email addresses.
+
 Return a JSON object with the following keys:
 
 1. **contribution_statements**: List of concise sentences where authors state their contribution.
 2. **gap_identification**: List of concise sentences describing limitations of SOTA.
 3. **novelty_claim_type**: Type of novelty ('Architecture', 'Data', 'Application', 'Efficiency', 'Theory', 'Other').
-4. **input_description**: Short description of the input.
-5. **output_description**: Short description of the target output.
-6. **method_name**: Specific name or description of the mechanism used.
-7. **objective_function**: Specific loss function or optimization target.
-8. **sota_comparisons**: List of brief text summarizing performance gains over baselines.
-9. **efficiency_metrics**: Parameter counts, inference time, or FLOPs.
-10. **novelty_abstract_context**: Context: Current methods for [Task] struggle with [Limitation].
-11. **novelty_abstract_proposal**: Proposal: We introduce [Method Name], which utilizes [Mechanism].
-12. **novelty_abstract_difference**: Difference: Unlike [Previous Method], our approach [Key Differentiator].
-13. **novelty_abstract_result**: Result: This leads to [Quantitative Improvement] on [Benchmark].
+4. **author_affiliations**: List of author affiliations found in the paper.
+5. **input_description**: Short description of the input.
+6. **output_description**: Short description of the target output.
+7. **method_name**: Specific name or description of the mechanism used.
+8. **objective_function**: Specific loss function or optimization target.
+9. **sota_comparisons**: List of brief text summarizing performance gains over baselines.
+10. **efficiency_metrics**: Parameter counts, inference time, or FLOPs.
+11. **novelty_abstract_context**: Context: Current methods for [Task] struggle with [Limitation].
+12. **novelty_abstract_proposal**: Proposal: We introduce [Method Name], which utilizes [Mechanism].
+13. **novelty_abstract_difference**: Difference: Unlike [Previous Method], our approach [Key Differentiator].
+14. **novelty_abstract_result**: Result: This leads to [Quantitative Improvement] on [Benchmark].
 
 Constraints:
 - Be **grounded**: Only report information explicitly stated in the text.
@@ -155,13 +171,25 @@ def get_text_from_latex(directory):
             
     return "\n".join(text_content)
 
-def get_text_from_pdf(pdf_path):
+def get_text_from_pdf(pdf_path, timeout=30):
     try:
-        reader = PdfReader(pdf_path)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text
+        # Set the signal handler and a 30-second alarm
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout)
+        
+        try:
+            reader = PdfReader(pdf_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+        finally:
+            # Disable the alarm
+            signal.alarm(0)
+            
+    except TimeoutException:
+        print(f"Timeout extracting text from PDF {pdf_path}")
+        return ""
     except Exception as e:
         print(f"Error extracting text from PDF {pdf_path}: {e}")
         return ""

@@ -344,6 +344,9 @@ def update_reference_dataset(new_papers_df):
         if "__index_level_0__" in test_ds.column_names:
             print("Removing __index_level_0__ from reference dataset...")
             test_ds = test_ds.remove_columns(["__index_level_0__"])
+        elif "__index_level_0__" in test_ds.features:
+            print("Removing __index_level_0__ from reference dataset features...")
+            test_ds = test_ds.remove_columns(["__index_level_0__"])
         
         # Prepare new papers dataframe to match reference schema
         # Reference columns: ['arXiv ID', 'arXiv URL', 'PDF URL', 'DOI', 'Publication Date', 'Updated Date', 'Title', 'Authors', 'Author Affiliations', 'Abstract', 'Categories', 'Primary Category', 'Comment', 'Journal Reference', 'Matched Conferences', 'label', 'source', 'classification_embedding', 'proximity_embedding', 'top_10_similar', 'max_similarity', 'avg_similarity']
@@ -380,7 +383,9 @@ def update_reference_dataset(new_papers_df):
         df["source"] = "arxiv_daily_ranking"
         
         # Ensure all columns exist and are in correct order
-        ref_features = test_ds.features
+        ref_features = test_ds.features.copy()
+        if "__index_level_0__" in ref_features:
+            del ref_features["__index_level_0__"]
         
         # Convert to Dataset to handle type casting
         # But first ensure dataframe has all columns
@@ -392,8 +397,11 @@ def update_reference_dataset(new_papers_df):
         df = df[list(ref_features.keys())]
         
         # Convert to Dataset
-        new_ds = Dataset.from_pandas(df)
+        new_ds = Dataset.from_pandas(df, preserve_index=False)
         
+        if "__index_level_0__" in new_ds.column_names:
+            new_ds = new_ds.remove_columns(["__index_level_0__"])
+            
         # Cast features to match reference
         new_ds = new_ds.cast(ref_features)
         
