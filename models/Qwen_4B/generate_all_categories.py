@@ -16,9 +16,11 @@ REPO_ROOT = CURRENT_DIR.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from models.Qwen_4B.utils import clean_dataset
-from models.Qwen_4B.utils.pipelines.constants import DEFAULT_OUTDIR, PRIMARY_CATEGORY_FIELD, WHOLE_DATASET
-from models.Qwen_4B.utils.pipelines.category_pipeline import (
+from models.Qwen_4B.utils import (
+    clean_dataset,
+    DEFAULT_OUTDIR,
+    PRIMARY_CATEGORY_FIELD,
+    WHOLE_DATASET,
     build_category_artifacts,
     ensure_clean_dir,
     resolve_paths,

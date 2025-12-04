@@ -359,3 +359,296 @@ def generate_classification_dpo_pairs(dataset: Dataset) -> Dataset:
     )
     
     return dpo_dataset
+
+
+# --- Pipeline helpers moved from utils.pipelines ---
+import os
+import shutil
+import random
+from collections import Counter, deque
+from dataclasses import dataclass
+from typing import Deque
+from datasets import load_from_disk
+
+
+# Constants (kept here for convenience by pipeline helpers)
+WHOLE_DATASET = "whole_dataset"
+PRIMARY_CATEGORY_FIELD = "Primary Category"
+LABEL_FIELD = "label"
+DEFAULT_OUTDIR = "data_cache"
+DEFAULT_SEED = 42
+DEFAULT_TEST_SPLIT = "data_cache/whole_dataset/test_sft_data/test_split_cleaned"
+DEFAULT_TRAIN_SPLIT = "data_cache/whole_dataset/train_sft_data/train_split_cleaned"
+
+
+@dataclass
+class CategoryPaths:
+    category: str
+    token: str
+    train_source: str
+    test_source: str
+    root: str
+    train_sft: str
+    test_sft: str
+    train_classification: str
+    test_classification: str
+    train_comparison: str
+    test_comparison: str
+
+
+def category_to_token(category: str) -> str:
+    token = category.replace("/", "_").replace(".", "_").replace("-", "_")
+    return token.upper()
+
+
+def ensure_clean_dir(path: str):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path, exist_ok=True)
+
+
+def resolve_paths(category: str, train_source: str, test_source: str, outdir: str) -> CategoryPaths:
+    token = category_to_token(category)
+    category_root = os.path.join(outdir, "categories", token)
+    train_sft_dir = os.path.join(category_root, "sft", "train")
+    test_sft_dir = os.path.join(category_root, "sft", "test")
+    train_class_dir = os.path.join(category_root, "dpo", "classification", "train")
+    test_class_dir = os.path.join(category_root, "dpo", "classification", "test")
+    train_comp_dir = os.path.join(category_root, "dpo", "comparison", "train")
+    test_comp_dir = os.path.join(category_root, "dpo", "comparison", "test")
+    return CategoryPaths(
+        category=category,
+        token=token,
+        train_source=train_source,
+        test_source=test_source,
+        root=category_root,
+        train_sft=train_sft_dir,
+        test_sft=test_sft_dir,
+        train_classification=train_class_dir,
+        test_classification=test_class_dir,
+        train_comparison=train_comp_dir,
+        test_comparison=test_comp_dir,
+    )
+
+
+def require_dataset(path: str, label: str):
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"Expected {label} at '{path}'. Run the prerequisite stage or adjust the input paths."
+        )
+
+
+def load_and_filter(dataset_path: str, category: str, filter_category: bool) -> Dataset:
+    logger.info("Loading dataset from %s", dataset_path)
+    ds = load_from_disk(dataset_path)
+    if not filter_category:
+        logger.info("Filter disabled; using entire dataset from %s", dataset_path)
+        return ds
+
+    if PRIMARY_CATEGORY_FIELD not in ds.column_names:
+        raise RuntimeError(f"Expected column '{PRIMARY_CATEGORY_FIELD}' not found in dataset")
+
+    logger.info("Filtering for category '%s'", category)
+    filtered = ds.filter(lambda row: str(row.get(PRIMARY_CATEGORY_FIELD, "")).strip() == category)
+    logger.info("Selected %d rows from %s", len(filtered), dataset_path)
+    return filtered
+
+
+def save_dataset(ds: Dataset, path: str):
+    ensure_clean_dir(path)
+    ds.save_to_disk(path)
+    logger.info("Saved dataset to %s", path)
+
+
+def extract_sft_splits(paths: CategoryPaths, filter_category: bool = True) -> dict:
+    counts = {}
+    test_filtered = load_and_filter(paths.test_source, paths.category, filter_category)
+    save_dataset(test_filtered, paths.test_sft)
+    counts["test"] = len(test_filtered)
+
+    train_filtered = load_and_filter(paths.train_source, paths.category, filter_category)
+    if len(train_filtered) == 0:
+        logger.warning("No train examples found for category '%s'", paths.category)
+    else:
+        save_dataset(train_filtered, paths.train_sft)
+    counts["train"] = len(train_filtered)
+    return counts
+
+
+def build_classification_pairs(paths: CategoryPaths) -> dict:
+    counts = {}
+
+    require_dataset(paths.train_sft, "train SFT split")
+    logger.info("Loading train subset from %s", paths.train_sft)
+    train_ds = load_from_disk(paths.train_sft)
+    logger.info("Loaded %d train rows", len(train_ds))
+
+    logger.info("Generating balanced classification DPO pairs for train subset")
+    train_pairs = generate_classification_dpo_pairs(train_ds)
+    logger.info("Generated %d train classification pairs", len(train_pairs))
+
+    ensure_clean_dir(paths.train_classification)
+    train_pairs.save_to_disk(paths.train_classification)
+    counts["train_pairs"] = len(train_pairs)
+    logger.info("Saved train classification pairs to %s", paths.train_classification)
+
+    require_dataset(paths.test_sft, "test SFT split")
+    logger.info("Loading test subset from %s", paths.test_sft)
+    test_ds = load_from_disk(paths.test_sft)
+    logger.info("Loaded %d test rows", len(test_ds))
+
+    logger.info("Converting test subset to classification DPO format without balancing")
+    test_pairs = test_ds.map(
+        create_classification_example,
+        remove_columns=test_ds.column_names,
+        desc="Generating classification DPO pairs for test subset",
+    )
+    logger.info("Generated %d test classification pairs", len(test_pairs))
+
+    ensure_clean_dir(paths.test_classification)
+    test_pairs.save_to_disk(paths.test_classification)
+    counts["test_pairs"] = len(test_pairs)
+    logger.info("Saved test classification pairs to %s", paths.test_classification)
+
+    return counts
+
+
+def build_comparison_pairs(paths: CategoryPaths, seed: int) -> dict:
+    counts = {}
+
+    def build_for_split(split_name: str, src_path: str, out_path: str) -> int:
+        require_dataset(src_path, f"{split_name} SFT split")
+        logger.info("Loading %s subset from %s", split_name, src_path)
+        ds = load_from_disk(src_path)
+        logger.info("Loaded %d %s rows", len(ds), split_name)
+
+        positives = ds.filter(lambda x: str(x.get(LABEL_FIELD, "")) == "1")
+        negatives = ds.filter(lambda x: str(x.get(LABEL_FIELD, "")) == "0")
+        logger.info("%s: positives=%d, negatives=%d", split_name, len(positives), len(negatives))
+
+        if len(positives) == 0 or len(negatives) == 0:
+            logger.warning("%s: Missing classes, skipping comparison pair generation", split_name)
+            ensure_clean_dir(out_path)
+            Dataset.from_list([]).save_to_disk(out_path)
+            return 0
+
+        indices = list(range(len(positives)))
+        random.Random(seed).shuffle(indices)
+        cycle_queue: Deque[int] = deque(indices)
+
+        pairs = []
+        for neg_sample in negatives:
+            pos_idx = cycle_queue[0]
+            pos_sample = positives[pos_idx]
+            pairs.append(create_comparison_example(pos_sample, neg_sample))
+            cycle_queue.rotate(-1)
+
+        logger.info("%s: Generated %d comparison pairs", split_name, len(pairs))
+        ensure_clean_dir(out_path)
+        Dataset.from_list(pairs).save_to_disk(out_path)
+        return len(pairs)
+
+    counts["train_pairs"] = build_for_split("train", paths.train_sft, paths.train_comparison)
+    counts["test_pairs"] = build_for_split("test", paths.test_sft, paths.test_comparison)
+    return counts
+
+
+def build_category_artifacts(
+    category: str,
+    train_input: str = DEFAULT_TRAIN_SPLIT,
+    test_input: str = DEFAULT_TEST_SPLIT,
+    outdir: str = DEFAULT_OUTDIR,
+    seed: int = DEFAULT_SEED,
+    run_sft: bool = True,
+    run_classification: bool = True,
+    run_comparison: bool = True,
+) -> dict:
+    filter_category = category != WHOLE_DATASET
+    paths = resolve_paths(category, train_input, test_input, outdir)
+    summary = {}
+
+    if run_sft:
+        summary["sft"] = extract_sft_splits(paths, filter_category=filter_category)
+    if run_classification:
+        summary["classification"] = build_classification_pairs(paths)
+    if run_comparison:
+        summary["comparison"] = build_comparison_pairs(paths, seed)
+
+    if summary:
+        summary["meta"] = {"category_root": paths.root}
+
+    return summary
+
+
+def ensure_base_sft_splits(
+    dataset_path: str,
+    train_cache_dir: str = os.path.dirname(DEFAULT_TRAIN_SPLIT),
+    test_cache_dir: str = os.path.dirname(DEFAULT_TEST_SPLIT),
+) -> tuple[str, str]:
+    train_split = os.path.join(train_cache_dir, "train_split_cleaned")
+    test_split = os.path.join(test_cache_dir, "test_split_cleaned")
+
+    dataset = None
+
+    if not os.path.exists(train_split):
+        if dataset is None:
+            from datasets import load_dataset
+
+            dataset = load_dataset(dataset_path)
+        os.makedirs(train_cache_dir, exist_ok=True)
+        cleaned_train = clean_dataset(dataset["train"])
+        cleaned_train.save_to_disk(train_split)
+
+    if not os.path.exists(test_split):
+        if dataset is None:
+            from datasets import load_dataset
+
+            dataset = load_dataset(dataset_path)
+        os.makedirs(test_cache_dir, exist_ok=True)
+        cleaned_test = clean_dataset(dataset["test"], filter_year=False)
+        cleaned_test.save_to_disk(test_split)
+
+    return train_split, test_split
+
+
+def ensure_category_resources(
+    category: str,
+    dataset_path: str,
+    train_split: str,
+    test_split: str,
+    *,
+    outdir: str = DEFAULT_OUTDIR,
+    seed: int | None = None,
+    need_sft: bool = False,
+    need_classification: bool = False,
+    need_comparison: bool = False,
+) -> CategoryPaths:
+    filter_category = category != WHOLE_DATASET
+    paths = resolve_paths(category, train_split, test_split, outdir)
+
+    want_sft = need_sft or need_classification or need_comparison
+    run_sft = want_sft and (
+        not os.path.exists(paths.train_sft) or not os.path.exists(paths.test_sft)
+    )
+    run_classification = need_classification and (
+        not os.path.exists(paths.train_classification)
+        or not os.path.exists(paths.test_classification)
+    )
+    run_comparison = need_comparison and (
+        not os.path.exists(paths.train_comparison)
+        or not os.path.exists(paths.test_comparison)
+    )
+
+    if run_sft or run_classification or run_comparison:
+        build_category_artifacts(
+            category=category if filter_category else WHOLE_DATASET,
+            train_input=train_split,
+            test_input=test_split,
+            outdir=outdir,
+            seed=DEFAULT_SEED if seed is None else seed,
+            run_sft=run_sft,
+            run_classification=run_classification,
+            run_comparison=run_comparison,
+        )
+
+    return paths
