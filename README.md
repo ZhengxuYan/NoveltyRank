@@ -225,6 +225,8 @@ Key flags:
 - `--include-similarity-report`: Add aggregated similarity context to each classification prompt.
 
 
+
+
 #### SciBERT Multimodal Training
 
 Fine-tunes SciBERT with text + embeddings + similarity features. Config options are at the top of the file.
@@ -233,6 +235,51 @@ Fine-tunes SciBERT with text + embeddings + similarity features. Config options 
 python scripts/Sci_BERT/ft_scibert.py
 ```
 
-Trains SciBERT with text + embeddings + similarity features. Config options are at the top of the file.
+#### Siamese SciBERT Training
+
+Trains a Siamese network with SciBERT backbone to predict pairwise novelty preferences.
+
+```bash
+python scripts/siamese_scibert/train_pairwise.py
+```
+
+#### Siamese SciBERT Evaluation
+
+Evaluate the pairwise agreement rate of the trained Siamese SciBERT model:
 
 
+```bash
+python scripts/siamese_scibert/evaluate_agreement.py
+```
+
+**Results (Agreement Rates):**
+
+| Category | Agreement | Count |
+|----------|-----------|-------|
+| cs.AI    | 72.32%    | 719   |
+| cs.CL    | 67.39%    | 1429  |
+| cs.CR    | 86.62%    | 1353  |
+| cs.CV    | 71.54%    | 2727  |
+| cs.LG    | 73.26%    | 1963  |
+| cs.RO    | 84.25%    | 1340  |
+| **COMBINED** | **75.26%** | **9531** |
+
+#### OpenAI Baseline Evaluation
+
+Evaluates frontier models (e.g., GPT-5.1) on the pairwise novelty task using the `bespokelabs-curator` library.
+
+```bash
+python scripts/openai/test_frontier_novelty.py
+```
+
+**OpenAI Model Agreement Rates**
+
+| Category | Count | 4omini | gpt4o | 5-mini | 5.1 |
+|----------|-------|--------|-------|--------|-----|
+| cs.AI    | 65    | 58.46% | 58.46% | 66.15% | 67.69% |
+| cs.CL    | 326   | 55.52% | 55.52% | 56.13% | 56.13% |
+| cs.CR    | 48    | 66.67% | 68.75% | 66.67% | 75.00% |
+| cs.CV    | 631   | 52.14% | 56.89% | 57.05% | 58.00% |
+| cs.LG    | 243   | 51.85% | 54.73% | 66.67% | 61.32% |
+| cs.RO    | 45    | 75.56% | 64.44% | 73.33% | 60.00% |
+| **COMBINED** | **1358** | **54.49%** | **56.92%** | **59.87%** | **59.28%** |

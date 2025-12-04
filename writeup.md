@@ -219,3 +219,20 @@ We use the whole dataset for training and testing.
 - **DPO without Similarity Report (load from SFT)** 
   - Model path: tinker://a69d7dfe-9693-5eeb-9dea-b065b39b13e0:train:0/sampler_weights/000700
   - Metrics: accuracy: 0.741
+## Siamese SciBERT Multimodal Model
+
+We also evaluated a Siamese network based on SciBERT, which takes pairs of papers and predicts which one is more novel. This model incorporates text, embeddings, and similarity features.
+
+**Agreement Rates on Test Set:**
+
+| Category | Agreement | Count |
+|----------|-----------|-------|
+| cs.AI    | 72.32%    | 719   |
+| cs.CL    | 67.39%    | 1429  |
+| cs.CR    | 86.62%    | 1353  |
+| cs.CV    | 71.54%    | 2727  |
+| cs.LG    | 73.26%    | 1963  |
+| cs.RO    | 84.25%    | 1340  |
+| **COMBINED** | **75.26%** | **9531** |
+
+The Siamese SciBERT model achieves a combined agreement rate of **75.26%**, significantly outperforming the base Qwen-4B comparison model (54.7%) and even the Qwen-235B model (57.0%). This suggests that the specialized encoder-based architecture with explicit similarity features captures novelty signals more effectively than the decoder-based LLMs in this pairwise setting.
