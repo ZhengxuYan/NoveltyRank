@@ -131,18 +131,21 @@ def create_comparison_example(novel_paper: Dict, random_paper: Dict) -> Dict:
         rejected_response = "A"
     # CV-focused prompt: emphasize vision-specific novelty dimensions and provide CV few-shots
     prompt_content = f"""
+You are an expert AI researcher and senior conference reviewer (CVPR/ICCV/NeurIPS level).
+Your goal is to compare the *conceptual novelty* of two AI research papers (not just surface/benchmark improvements).
+
 You are an expert computer-vision researcher and senior conference reviewer (CVPR/ICCV/NeurIPS level).
 Your goal is to compare the *conceptual novelty* of two computer-vision research papers (not just surface/benchmark improvements).
 
 ---
-What counts as Conceptual Novelty in Computer Vision?
-- Problem formulation: introduces a new problem or reframes a visual task (e.g., novel 3D reconstruction objective, new cross-modal alignment task).
-- Methodological innovation: proposes a new class of models or training paradigms for visual data (e.g., transformer architectures adapted to image patches, implicit neural representations like NeRF, diffusion for image synthesis).
-- Representation or inductive bias: introduces a new way to represent visual content (e.g., continuous scene representations, equivariant networks, geometric priors).
-- Evaluation / benchmarking shift: defines a fundamentally different evaluation protocol that reveals new capabilities (not just adding another dataset split).
-- Cross-modal or cross-disciplinary transfer that opens new research directions (e.g., physics-informed rendering for vision, neuro-inspired perceptual priors).
+Conceptual Novelty Primer
+Consider the following signals:
+- Problem Formulation: Does it redefine an existing task or introduce a new one?
+- Methodological Innovation: Does it propose a new class of algorithms or training paradigm?
+- Theoretical Insight: Does it deliver a unifying or surprising theoretical lens?
+- Cross-Disciplinary Import: Does it import a transformative idea from another domain?
 
-Incremental contributions (e.g., slightly higher ImageNet accuracy, simple augmentation tweaks, hyperparameter tuning, or re-running existing methods on another dataset) are NOT considered conceptually novel.
+Incremental tweaks (hyperparameters, surface-level architecture edits, dataset swaps) are not novel.
 
 ---
 Step-by-step reasoning (use these as your guide and mention the strongest signal):
@@ -151,7 +154,7 @@ Step-by-step reasoning (use these as your guide and mention the strongest signal
 3) Use similarity metrics as supportive evidence (high similarity tilts toward incremental), but prioritize conceptual signals (new objective, representation, or theory).
 4) Choose which paper is more conceptually novel; answer only with 'A' or 'B'.
 
---- EXAMPLES (computer-vision focused)
+--- EXAMPLES ---
 Example 1:
 Paper A: Introduces Vision Transformer (ViT) — treats images as a sequence of patches and applies a pure transformer backbone, changing core architecture for vision.
 Paper B: Reports small regularization and augmentation tweaks to ResNet training that marginally improve accuracy.
