@@ -149,9 +149,10 @@ async def main():
     parser.add_argument("--limit", type=int, default=20000,
                         help="Number of comparison examples to evaluate")
     parser.add_argument(
-        "--use-similarity-report",
-        action="store_true",
-        help="Load comparison splits that include similarity reports (from similiarity_aware_categories).",
+        "--data_variant",
+        choices=["base", "sim"],
+        default="base",
+        help="Which data variant to use: base or sim (similarity-aware)",
     )
     args = parser.parse_args()
     category_arg = args.category or "WHOLE_DATASET"
@@ -171,7 +172,7 @@ async def main():
     dataset_limit = max(1, args.limit)
 
     category_root = Path("data_cache") / (
-        "similiarity_aware_categories" if args.use_similarity_report else "categories"
+        "similiarity_aware_categories" if args.data_variant == "sim" else "categories"
     )
     if not category_root.exists():
         raise FileNotFoundError(

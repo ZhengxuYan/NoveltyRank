@@ -236,3 +236,65 @@ We also evaluated a Siamese network based on SciBERT, which takes pairs of paper
 | **COMBINED** | **75.26%** | **9531** |
 
 The Siamese SciBERT model achieves a combined agreement rate of **75.26%**, significantly outperforming the base Qwen-4B comparison model (54.7%) and even the Qwen-235B model (57.0%). This suggests that the specialized encoder-based architecture with explicit similarity features captures novelty signals more effectively than the decoder-based LLMs in this pairwise setting.
+
+### Performance Comparison
+We compared our Siamese SciBERT model against frontier LLMs (GPT-4o, GPT-5.1, etc.) on the pairwise novelty ranking task.
+
+**Agreement Rates (Siamese SciBERT vs. Frontier Models)**
+
+| Model | cs.AI | cs.CL | cs.CR | cs.CV | cs.LG | cs.RO | **COMBINED** |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| GPT-4o-mini | 58.46% | 55.52% | 66.67% | 52.14% | 51.85% | 75.56% | 54.49% |
+| GPT-4o | 58.46% | 55.52% | 68.75% | 56.89% | 54.73% | 64.44% | 56.92% |
+| GPT-5-mini | 66.15% | 56.13% | 66.67% | 57.05% | 66.67% | 73.33% | 59.87% |
+| GPT-5.1 | 67.69% | 56.13% | 75.00% | 58.00% | 61.32% | 60.00% | 59.28% |
+| **Siamese SciBERT** | **72.32%** | **67.39%** | **86.62%** | **71.54%** | **73.26%** | **84.25%** | **75.26%** |
+
+
+
+
+
+
+
+### Binary Novelty Classification
+We also evaluated frontier models on a binary classification task (Novel vs Not Novel).
+
+**Binary Classification Metrics**
+
+| Model | Category | Acc | Prec | Rec | F1 |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **GPT-4o-mini** | cs.AI | 12.50% | 9.79% | 100.00% | 17.84% |
+|  | cs.CL | 16.50% | 15.23% | 100.00% | 26.43% |
+|  | cs.CR | 9.50% | 3.72% | 100.00% | 7.18% |
+|  | cs.CV | 16.50% | 16.08% | 100.00% | 27.71% |
+|  | cs.LG | 14.00% | 11.79% | 100.00% | 21.10% |
+|  | cs.RO | 7.00% | 3.63% | 100.00% | 7.00% |
+|  | COMBINED | **12.67%** | **10.12%** | **100.00%** | **18.38%** |
+| **GPT-4o** | cs.AI | 19.50% | 9.66% | 89.47% | 17.44% |
+|  | cs.CL | 29.50% | 17.16% | 96.67% | 29.15% |
+|  | cs.CR | 26.00% | 4.52% | 100.00% | 8.64% |
+|  | cs.CV | 23.00% | 17.20% | 100.00% | 29.36% |
+|  | cs.LG | 18.00% | 11.89% | 95.65% | 21.15% |
+|  | cs.RO | 13.50% | 3.89% | 100.00% | 7.49% |
+|  | COMBINED | **21.58%** | **10.85%** | **96.61%** | **19.50%** |
+| **GPT-5-mini** | cs.AI | 68.00% | 14.29% | 47.37% | 21.95% |
+|  | cs.CL | 56.00% | 17.05% | 50.00% | 25.42% |
+|  | cs.CR | 56.00% | 3.45% | 42.86% | 6.38% |
+|  | cs.CV | 56.00% | 21.43% | 65.62% | 32.31% |
+|  | cs.LG | 53.00% | 16.19% | 73.91% | 26.56% |
+|  | cs.RO | 73.00% | 8.77% | 71.43% | 15.62% |
+|  | COMBINED | **60.33%** | **14.06%** | **59.32%** | **22.73%** |
+| **GPT-5.1** | cs.AI | 24.32% | 10.75% | 90.91% | 19.23% |
+|  | cs.CL | 34.23% | 22.34% | 100.00% | 36.52% |
+|  | cs.CR | 25.23% | 3.49% | 100.00% | 6.74% |
+|  | cs.CV | 21.62% | 13.86% | 100.00% | 24.35% |
+|  | cs.LG | 24.32% | 17.65% | 100.00% | 30.00% |
+|  | cs.RO | 15.32% | 3.09% | 100.00% | 6.00% |
+|  | COMBINED | **24.17%** | **12.04%** | **98.57%** | **21.46%** |
+| **SciBERT Multimodal** | cs.AI | 74.74% | 13.66% | 38.46% | 20.16% |
+|  | cs.CL | 63.13% | 21.08% | 35.89% | 26.56% |
+|  | cs.CR | 96.43% | 0.00% | 0.00% | 0.00% |
+|  | cs.CV | 67.42% | 21.38% | 27.42% | 24.03% |
+|  | cs.LG | 66.82% | 15.42% | 44.86% | 22.95% |
+|  | cs.RO | 95.38% | 4.76% | 2.22% | 3.03% |
+|  | COMBINED | **74.42%** | **18.66%** | **31.30%** | **23.38%** |

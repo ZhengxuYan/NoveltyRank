@@ -107,9 +107,10 @@ async def main():
     parser.add_argument("--limit", type=int, default=20000,
                         help="Number of evaluation examples to sample")
     parser.add_argument(
-        "--include-similarity-report",
-        action="store_true",
-        help="Augment prompts with the precomputed similarity report",
+        "--data_variant",
+        choices=["base", "sim"],
+        default="base",
+        help="Which data variant to use: base or sim (similarity-aware)",
     )
     args = parser.parse_args()
 
@@ -128,8 +129,7 @@ async def main():
     temperature = args.temperature
     max_tokens = args.max_tokens
     dataset_limit = max(1, args.limit)
-    include_similarity_report = args.include_similarity_report
-    data_variant = DATA_VARIANT_SIM if include_similarity_report else DATA_VARIANT_BASE
+    data_variant = DATA_VARIANT_SIM if args.data_variant == "sim" else DATA_VARIANT_BASE
 
     dataset = load_category_dataset(
         dataset_type=TASK_CLASSIFICATION,

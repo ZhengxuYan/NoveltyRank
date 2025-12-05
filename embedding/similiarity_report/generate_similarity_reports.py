@@ -22,9 +22,9 @@ except ImportError:  # pragma: no cover - executed only for direct script usage
     REPO_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)
-    from embedding.simliarity_report.metadata import ArxivMetadataIndex, SimilarPaper
-    from embedding.simliarity_report.prompts import build_similarity_prompt
-    from embedding.simliarity_report.sampler import TinkerSampler
+    from embedding.similiarity_report.metadata import ArxivMetadataIndex, SimilarPaper
+    from embedding.similiarity_report.prompts import build_similarity_prompt
+    from embedding.similiarity_report.sampler import TinkerSampler
 
 load_dotenv()
 logger = logging.getLogger("similarity_report")
@@ -309,7 +309,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--metadata-cache",
-        default="embedding/simliarity_report/cache/metadata_index.pkl",
+        default="embedding/similiarity_report/cache/metadata_index.pkl",
         help="Optional path to cache the metadata index for faster reloads.",
     )
     parser.add_argument(

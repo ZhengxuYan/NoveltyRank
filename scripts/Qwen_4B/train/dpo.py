@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import argparse
 import chz
 from typing import Optional
 
@@ -50,11 +51,11 @@ class NoveltyDPOConfig:
     # Core Model settings
     model_name: str = "Qwen/Qwen3-4B-Instruct-2507"
     reference_model_name: Optional[str] = None  # If None, uses model_name (weights frozen)
-    
+
     # Checkpointing
     load_checkpoint_path: Optional[str] = None
     log_path: str = f"results/noveltyrank_dpo_qwen4b_{CURRENT_MODE}"
-    
+
     # Training Hyperparameters
     learning_rate: float = 5e-6
     batch_size: int = 128
@@ -63,15 +64,15 @@ class NoveltyDPOConfig:
     lora_rank: int = 32
     save_every: int = 10
     eval_every: int = 10
-    
+
     # Data processing
     max_length: int = 1024
     renderer_name: Optional[str] = None  # Will auto-detect if None
-    
+
     # DPO Mode Selection: "comparison" (Pairwise A/B) or "classification" (Pointwise 1/0)
     dpo_mode: str = CURRENT_MODE
     category: str = WHOLE_DATASET
-    include_similarity_report: bool = False
+    data_variant: str = DATA_VARIANT_BASE
     classification_variant: str = DATA_VARIANT_SIM
     comparison_variant: str = DATA_VARIANT_BASE
     category_subdir: str = CATEGORY_SUBDIR_DEFAULT
@@ -88,6 +89,19 @@ class NoveltyDPOConfig:
 # -----------------------------------------------------------------------------
 
 def main(env_config: NoveltyDPOConfig):
+    # --- Data preparation: ensure all required splits and DPO pairs exist ---
+    try:
+        from models.Qwen_4B.data_preparation import prepare_data
+        prep_type = env_config.dpo_mode if env_config.dpo_mode in ["classification", "comparison"] else "comparison"
+        print(f"[PREP] Ensuring data for DPO ({prep_type}), data_variant={env_config.data_variant}")
+        prepare_data_args = argparse.Namespace(
+            data_variant=env_config.data_variant,
+            type=prep_type
+        )
+        prepare_data(prepare_data_args)
+    except Exception as e:
+        print(f"[WARN] Data preparation step failed: {e}")
+
     logger.info(f"Starting DPO training for model: {env_config.model_name}")
     logger.info(f"DPO Mode: {env_config.dpo_mode}")
 
@@ -104,6 +118,7 @@ def main(env_config: NoveltyDPOConfig):
         batch_size=env_config.batch_size
     )
     
+    include_similarity_report = (env_config.data_variant == "sim")
     dataset_builder = NoveltyRankDatasetLoader(
         common_config=common_ds_config,
         dpo_mode=env_config.dpo_mode,
@@ -111,7 +126,7 @@ def main(env_config: NoveltyDPOConfig):
         classification_variant=env_config.classification_variant,
         comparison_variant=env_config.comparison_variant,
         category_subdir=env_config.category_subdir,
-        include_similarity_report=env_config.include_similarity_report,
+        include_similarity_report=include_similarity_report,
     )
 
     # 4. Initialize Evaluator Builder
@@ -123,7 +138,7 @@ def main(env_config: NoveltyDPOConfig):
         classification_variant=env_config.classification_variant,
         comparison_variant=env_config.comparison_variant,
         category_subdir=env_config.category_subdir,
-        include_similarity_report=env_config.include_similarity_report,
+        include_similarity_report=include_similarity_report,
         eval_sample_limit=env_config.eval_sample_limit,
     )
 
