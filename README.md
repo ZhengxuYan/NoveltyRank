@@ -13,8 +13,19 @@
 
 ## Overview
 
-This repository contains the implementation of **NoveltyRank**, a system designed to estimate the **conceptual novelty** of AI papers based on their semantic embeddings, similarity with prior literature, and metadata.  
-It includes dataset processing, embedding generation, and model training pipelines for both **decoder-based LLM fine-tuning** and **encoder-based multimodal classification**.
+NoveltyRank evaluates the conceptual novelty of AI research papers using two complementary task formulations and three benchmark modeling approaches.
+
+We implement:
+1. Binary Novelty Classification – predicting whether a single paper is novel.
+2. Pairwise Novelty Comparison – determining which of two papers is more novel.
+
+To benchmark these tasks across different modeling scales, we compare three methods:
+- GPT-5.1 (zero-shot) as a large-scale frontier baseline
+- Qwen3-4B (SFT + DPO fine-tuning) as a mid-sized, task-adapted LLM
+- SciBERT (fine-tuned and Siamese variants) as an efficient domain-specific encoder
+
+This framework highlights how task formulation and model adaptation influence novelty estimation, with pairwise comparison and fine-tuned models providing the most reliable performance.
+
 
 This project is part of **Stanford University’s CS230: Deep Learning (Fall 2025)**.  
 Dataset hosted at: [Hugging Face – novelty-ranked-preprints](https://huggingface.co/datasets/JasonYan777/novelty-ranked-preprints/viewer/default/train?sort%5Bcolumn%5D=novelty_score&sort%5Bdirection%5D=desc&views%5B%5D=train&row=5073)
