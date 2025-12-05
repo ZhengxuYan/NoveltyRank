@@ -1,9 +1,13 @@
 # NoveltyRank
 
 <div align="center">
-  <img src="web/public/logo.png" alt="NoveltyRank Logo" width="200"/>
+  <img src="web/public/banner.png" alt="NoveltyRank Logo" width="1000"/>
   <br>
-  <a href="https://novelty-rank.vercel.app/"><strong>Explore the Leaderboard »</strong></a>
+  <h3>
+    <a href="https://novelty-rank.vercel.app/">
+      🚀 Discover the Most Innovative Papers »
+    </a>
+  </h3>
 </div>
 
 
