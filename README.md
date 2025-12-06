@@ -100,6 +100,19 @@ Dataset hosted at: [Hugging Face – novelty-ranked-preprints](https://huggingfa
    If you don't have these tokens, please sign up on the respective platforms to obtain them.
 
 ---
+### Node.js / Frontend Dependency Management
+
+If you need to modify or run the frontend (under the `web/` directory), install Node.js dependencies by running:
+```bash
+cd web
+npm install
+# or
+yarn install
+```
+All packages will be installed into the `node_modules/` folder, which is included in `.gitignore` and should not be committed to the repository. Only `package.json` and lock files (`package-lock.json` or `yarn.lock`) are needed for reproducibility.
+
+If you do not need to modify or run the frontend, you can skip this step entirely.
+---
 
 ## Code Structure
 

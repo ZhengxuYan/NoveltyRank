@@ -17,6 +17,7 @@ dataset/
 datasets/
 cache/  
 data_cache/
+node_modules/
 
 # CSV Files
 *.csv
