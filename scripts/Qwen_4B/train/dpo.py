@@ -66,7 +66,7 @@ class NoveltyDPOConfig:
     eval_every: int = 10
 
     # Data processing
-    max_length: int = 1024
+    max_length: int = 4096
     renderer_name: Optional[str] = None  # Will auto-detect if None
 
     # DPO Mode Selection: "comparison" (Pairwise A/B) or "classification" (Pointwise 1/0)
