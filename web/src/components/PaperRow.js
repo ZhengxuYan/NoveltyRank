@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award, Calendar, ExternalLink, FileText, Medal, Building2, Star, TrendingUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Award, Calendar, ExternalLink, FileText, Building2, Star } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 
 export default function PaperRow({ paper, rank, compact = false }) {

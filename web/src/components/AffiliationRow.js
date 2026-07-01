@@ -1,11 +1,9 @@
 "use client";
 
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Building2, Trophy, Star } from 'lucide-react';
-import { useLanguage } from '@/contexts/LanguageContext';
+import { ChevronDown, ChevronUp, Building2, Trophy } from 'lucide-react';
 
 export default function AffiliationRow({ affiliation, rank, isSearching }) {
-  const { t } = useLanguage();
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Rank Style
@@ -112,4 +110,3 @@ export default function AffiliationRow({ affiliation, rank, isSearching }) {
     </>
   );
 }
-

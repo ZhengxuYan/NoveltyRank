@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState } from 'react';
 import { translations } from '@/lib/translations';
 
 const LanguageContext = createContext();
@@ -16,17 +16,12 @@ const AVAILABLE_LANGUAGES = [
 ];
 
 export function LanguageProvider({ children }) {
-  const [language, setLanguage] = useState('en');
-
-  // Auto-detect browser language
-  useEffect(() => {
+  const [language, setLanguage] = useState(() => {
+    if (typeof navigator === 'undefined') return 'en';
     const browserLang = navigator.language.split('-')[0];
     const supportedCodes = AVAILABLE_LANGUAGES.map(l => l.code);
-    
-    if (supportedCodes.includes(browserLang)) {
-      setLanguage(browserLang);
-    }
-  }, []);
+    return supportedCodes.includes(browserLang) ? browserLang : 'en';
+  });
 
   const t = translations[language] || translations['en'];
 

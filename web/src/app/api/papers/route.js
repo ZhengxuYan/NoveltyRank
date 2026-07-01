@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 const HF_DATASET = "JasonYan777/novelty-ranked-preprints";
 const HF_API_URL = `https://datasets-server.huggingface.co/rows?dataset=${HF_DATASET}&config=default&split=train`;
 
-async function fetchWithRetry(url, retries = 1) {
+async function fetchWithRetry(url, retries = 3) {
   for (let i = 0; i < retries; i++) {
     try {
       const headers = {};

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Award } from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function PaperCard({ paper }) {
   const [isExpanded, setIsExpanded] = useState(false);

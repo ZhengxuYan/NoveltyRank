@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo } from "react";
-import { fetchAllPapers } from "@/lib/data";
+import { fetchAllPapers, getLatestPaperDate } from "@/lib/data";
 import PaperRow from "@/components/PaperRow";
 import AffiliationRow from "@/components/AffiliationRow";
 import Filters from "@/components/Filters";
@@ -13,6 +13,7 @@ import {
   Layers,
   GraduationCap,
   Building2,
+  Calendar,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -36,7 +37,8 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("papers"); // "papers" or "affiliations"
   const [currentPage, setCurrentPage] = useState(1);
-  const [statusMsg, setStatusMsg] = useState("");
+  const [dataStatus, setDataStatus] = useState(null);
+  const todayDate = useMemo(() => new Date(), []);
 
   // Initial Data Fetch with Background Loading
   useEffect(() => {
@@ -45,13 +47,13 @@ export default function Home() {
         const onProgress = (currentPapers) => {
           setPapers(currentPapers);
           setLoadingProgress(currentPapers.length);
-          if (currentPapers.length > 0 && loading) {
+          if (currentPapers.length > 0) {
             setLoading(false);
           }
         };
 
-        const onStatus = (msg) => {
-          setStatusMsg(msg);
+        const onStatus = (status) => {
+          setDataStatus(status);
         };
 
         await fetchAllPapers(onProgress, onStatus);
@@ -100,20 +102,33 @@ export default function Home() {
     return allPapers.map((p) => paperMap.get(p.arxiv_id) || p);
   };
 
+  const latestPaperDate = useMemo(() => getLatestPaperDate(papers), [papers]);
+
+  const formatDate = (dateValue) => {
+    if (!dateValue) return "Unknown";
+    const date = dateValue instanceof Date ? dateValue : new Date(dateValue);
+    if (Number.isNaN(date.getTime())) return "Unknown";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+
   // 1. Time Filter & Ranking
   const rankedPapers = useMemo(() => {
     let result = [...papers];
 
     // Filter by Time FIRST
     if (filters.days < 3650) {
-      const cutoffDate = new Date();
+      const cutoffDate = latestPaperDate ? new Date(latestPaperDate) : new Date();
       cutoffDate.setDate(cutoffDate.getDate() - filters.days);
       result = result.filter((p) => new Date(p.published) >= cutoffDate);
     }
 
     // Then Calculate Ranks on the time-filtered set
     return calculateRanks(result);
-  }, [papers, filters.days]);
+  }, [papers, filters.days, latestPaperDate]);
 
   // 2. Category Filter (NO SEARCH) - Used for Global Ranking
   const categoryFilteredPapers = useMemo(() => {
@@ -279,20 +294,26 @@ export default function Home() {
     currentPage * ITEMS_PER_PAGE
   );
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [filters, searchQuery, viewMode]);
-
   const handleFilterChange = (newFilters) => {
     setFilters(newFilters);
+    setCurrentPage(1);
   };
 
   const handleSearch = (query) => {
     setSearchQuery(query);
+    setCurrentPage(1);
   };
 
   const handleViewModeChange = (mode) => {
     setViewMode(mode);
+    setCurrentPage(1);
+  };
+
+  const getDataStatusLabel = (source) => {
+    if (source === "live") return t.dashboard.dataStatus.live;
+    if (source === "partial") return t.dashboard.dataStatus.partial;
+    if (source === "cache") return t.dashboard.dataStatus.cache;
+    return t.dashboard.dataStatus.snapshot;
   };
 
   return (
@@ -300,9 +321,16 @@ export default function Home() {
       <div className="w-full px-6">
         {/* Hero Section */}
         <div className="mb-12">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-900/20 border border-red-900/30 text-red-400 text-xs font-medium mb-6">
-            <GraduationCap className="w-3 h-3" />
-            {t.hero.badge}
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="inline-flex w-fit items-center gap-2 px-3 py-1 rounded-full bg-red-900/20 border border-red-900/30 text-red-400 text-xs font-medium">
+              <GraduationCap className="w-3 h-3" />
+              {t.hero.badge}
+            </div>
+            <div className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-800 bg-slate-900/70 px-3 py-1 text-xs font-medium text-slate-400">
+              <Calendar className="h-3.5 w-3.5 text-indigo-400" />
+              <span className="text-slate-500">{t.dashboard.dataStatus.today}</span>
+              <span className="text-slate-200">{formatDate(todayDate)}</span>
+            </div>
           </div>
           <h1 className="text-4xl font-bold text-white mb-4 tracking-tight">
             {t.hero.titlePrefix}{" "}
@@ -323,6 +351,30 @@ export default function Home() {
           onViewModeChange={handleViewModeChange}
           viewMode={viewMode}
         />
+
+        {dataStatus && (
+          <div className="mb-6 flex flex-col gap-2 rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  dataStatus.source === "live" ? "bg-emerald-400" : "bg-amber-400"
+                }`}
+              />
+              <span className="font-medium text-slate-300">
+                {getDataStatusLabel(dataStatus.source)}
+              </span>
+              <span className="text-slate-600">/</span>
+              <span>
+                {dataStatus.count.toLocaleString()} {t.dashboard.papers}
+              </span>
+            </div>
+            {dataStatus.isStale && (
+              <span className="text-amber-300/90">
+                {t.dashboard.dataStatus.stale}
+              </span>
+            )}
+          </div>
+        )}
 
         {/* Loading State */}
         {loading && papers.length === 0 && (
@@ -370,7 +422,7 @@ export default function Home() {
                       </thead>
                       <tbody className="divide-y divide-slate-800/50">
                         {paginatedItems.length > 0 ? (
-                          paginatedItems.map((aff, index) => (
+                          paginatedItems.map((aff) => (
                             <AffiliationRow
                               key={aff.name}
                               affiliation={aff}
