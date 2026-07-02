@@ -2,6 +2,7 @@ import { paperSnapshot, SNAPSHOT_GENERATED_AT } from "./paperSnapshot.js";
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGES = 120;
+const PAGE_BATCH_SIZE = 8;
 const PAPER_CACHE_KEY = "noveltyrank-paper-cache-v1";
 const CACHE_PAPER_LIMIT = 1000;
 const ABSTRACT_CACHE_LIMIT = 700;
@@ -127,7 +128,7 @@ export async function fetchAllPapers(
   const allPapers = [];
 
   try {
-    for (let page = 0; page < MAX_PAGES; page += 1) {
+    const fetchPage = async (page) => {
       const offset = page * pageSize;
       const response = await fetchImpl(
         `/api/papers?offset=${offset}&limit=${pageSize}`
@@ -140,18 +141,46 @@ export async function fetchAllPapers(
       const payload = await response.json();
       const pageRows = normalizePaperRows(payload.rows);
 
-      if (pageRows.length === 0) break;
+      return {
+        rows: pageRows,
+        totalRows: Number(payload.num_rows_total ?? 0),
+      };
+    };
 
-      allPapers.push(...pageRows);
+    const firstPage = await fetchPage(0);
+
+    if (firstPage.rows.length === 0) {
+      throw new Error("Paper API returned no papers");
+    }
+
+    allPapers.push(...firstPage.rows);
+    onProgress?.([...allPapers]);
+    writeCachedPapers(storage, allPapers);
+
+    const totalRows = firstPage.totalRows || allPapers.length;
+    const totalPages = Math.min(Math.ceil(totalRows / pageSize), MAX_PAGES);
+
+    for (let page = 1; page < totalPages; page += PAGE_BATCH_SIZE) {
+      const batchPages = Array.from(
+        { length: Math.min(PAGE_BATCH_SIZE, totalPages - page) },
+        (_, index) => page + index
+      );
+
+      const batchResults = await Promise.all(
+        batchPages.map((batchPage) => fetchPage(batchPage))
+      );
+
+      const batchRows = batchResults.flatMap((result) => result.rows);
+
+      if (batchRows.length === 0) break;
+
+      allPapers.push(...batchRows);
       onProgress?.([...allPapers]);
       writeCachedPapers(storage, allPapers);
 
-      const totalRows = Number(payload.num_rows_total ?? allPapers.length);
-      if (allPapers.length >= totalRows || pageRows.length < pageSize) break;
-    }
-
-    if (allPapers.length === 0) {
-      throw new Error("Paper API returned no papers");
+      if (allPapers.length >= totalRows || batchRows.length < batchPages.length * pageSize) {
+        break;
+      }
     }
 
     onStatus?.(createStatus("live", allPapers));

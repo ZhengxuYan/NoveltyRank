@@ -18,6 +18,7 @@ import {
 import { useLanguage } from "@/contexts/LanguageContext";
 
 const ITEMS_PER_PAGE = 50;
+const DASHBOARD_PAPERS_PER_CATEGORY = 50;
 
 const DISPLAY_CATEGORIES = [
   { label: "Computer Vision", value: "cs.CV" },
@@ -33,7 +34,7 @@ export default function Home() {
   const [papers, setPapers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
-  const [filters, setFilters] = useState({ category: "All", days: 30 });
+  const [filters, setFilters] = useState({ category: "All", days: 3650 });
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState("papers"); // "papers" or "affiliations"
   const [currentPage, setCurrentPage] = useState(1);
@@ -274,7 +275,7 @@ export default function Home() {
       const allCatPapers = searchFilteredPapers.filter(
         (p) => p.primary_category && p.primary_category.includes(cat.value)
       );
-      const topPapers = allCatPapers.slice(0, 20); // Top 20 for dashboard
+      const topPapers = allCatPapers.slice(0, DASHBOARD_PAPERS_PER_CATEGORY);
 
       return {
         ...cat,
@@ -460,7 +461,7 @@ export default function Home() {
                       {t.dashboard.leaderboards}
                     </h2>
                   </div>
-                  {loadingProgress > 0 && loadingProgress < 7000 && (
+                  {loadingProgress > 0 && dataStatus?.source !== "live" && (
                     <div className="flex items-center gap-2 text-xs text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
                       <Loader2 className="w-3 h-3 animate-spin" />
                       {t.dashboard.indexing} ({loadingProgress})
@@ -554,7 +555,7 @@ export default function Home() {
                     </span>
                   </div>
 
-                  {loadingProgress > 0 && loadingProgress < 7000 && (
+                  {loadingProgress > 0 && dataStatus?.source !== "live" && (
                     <div className="flex items-center gap-2 text-xs text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
                       <Loader2 className="w-3 h-3 animate-spin" />
                       {t.dashboard.indexing} ({loadingProgress})
